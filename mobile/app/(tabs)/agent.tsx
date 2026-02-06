@@ -1,7 +1,13 @@
 /**
- * AI Agent chat screen.
+ * AI Agent chat screen with conversation history.
  * Chat interface powered by OpenAI function calling that orchestrates
  * the enrichment pipeline via the ai-agent Edge Function.
+ *
+ * Features:
+ * - Send messages via Enter (web) or send button
+ * - Full conversation persistence (messages + tool logs)
+ * - Slide-down history panel to browse/resume previous chats
+ * - Auto-save after each exchange
  */
 import {
   View,
@@ -12,11 +18,18 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Modal,
 } from "react-native";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { Card } from "@/components/ui/card";
-import { useSendAgentMessage } from "@/lib/queries";
+import {
+  useSendAgentMessage,
+  useAgentConversations,
+  useSaveConversation,
+  useDeleteConversation,
+  useJobProgress,
+} from "@/lib/queries";
 import type { AgentMessage, AgentToolLogEntry } from "@/lib/types";
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -31,6 +44,7 @@ interface DisplayMessage {
 // ─── Tool label/icon mapping ─────────────────────────────────────────
 
 const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
+  create_campaign: { label: "Create Campaign", icon: "add-circle-outline" },
   list_campaigns: { label: "List Campaigns", icon: "list-outline" },
   get_campaign_stats: { label: "Campaign Stats", icon: "bar-chart-outline" },
   scrape_google_maps: { label: "Scrape Google Maps", icon: "search-outline" },
@@ -39,34 +53,159 @@ const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
   find_decision_makers: { label: "Find Decision Makers", icon: "people-outline" },
   casualise_names: { label: "Casualise Names", icon: "text-outline" },
   get_active_jobs: { label: "Check Jobs", icon: "sync-outline" },
+  get_sample_leads: { label: "Sample Leads", icon: "eye-outline" },
 };
 
+// ─── Helpers ─────────────────────────────────────────────────────────
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 // ─── Components ──────────────────────────────────────────────────────
+
+// ─── Job Progress Bar ─────────────────────────────────────────────
+
+function JobProgressBar({ jobId }: { jobId: string }) {
+  const { data: job } = useJobProgress(jobId);
+
+  if (!job) return null;
+
+  const processed = job.progress?.processed ?? 0;
+  const total = job.progress?.total ?? 0;
+  const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
+  const isComplete = job.status === "completed";
+  const isFailed = job.status === "failed" || job.status === "cancelled";
+  const isPending = job.status === "pending";
+  const isRunning = job.status === "running";
+
+  // Elapsed time
+  let elapsed = "";
+  if (job.started_at) {
+    const start = new Date(job.started_at).getTime();
+    const end = job.completed_at
+      ? new Date(job.completed_at).getTime()
+      : Date.now();
+    const secs = Math.round((end - start) / 1000);
+    elapsed =
+      secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  }
+
+  return (
+    <View className="mt-1.5 bg-slate-900/50 rounded-lg px-3 py-2 border border-slate-700/30">
+      {/* Progress bar track */}
+      <View className="h-2 bg-slate-700 rounded-full overflow-hidden">
+        <View
+          className={`h-full rounded-full ${
+            isComplete
+              ? "bg-green-500"
+              : isFailed
+                ? "bg-red-500"
+                : isPending
+                  ? "bg-yellow-500"
+                  : "bg-blue-500"
+          }`}
+          style={{ width: `${isPending ? 5 : Math.max(pct, 2)}%` }}
+        />
+      </View>
+
+      {/* Status row */}
+      <View className="flex-row items-center justify-between mt-1.5">
+        <Text className="text-xs text-slate-400">
+          {isComplete
+            ? `✓ Completed — ${processed} processed`
+            : isFailed
+              ? `✗ ${job.error?.slice(0, 60) || "Failed"}`
+              : isPending
+                ? "⏳ Queued — waiting for worker…"
+                : `${pct}% — ${processed} / ${total} leads`}
+        </Text>
+        <View className="flex-row items-center">
+          {elapsed ? (
+            <Text className="text-xs text-slate-500 mr-1">{elapsed}</Text>
+          ) : null}
+          {isRunning && (
+            <ActivityIndicator
+              size="small"
+              color="#3b82f6"
+              style={{ transform: [{ scale: 0.6 }] }}
+            />
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+// ─── Tool Call Card ───────────────────────────────────────────────
+
+const MAX_EXPANDED_CHARS = 3000;
 
 function ToolCallCard({ entry }: { entry: AgentToolLogEntry }) {
   const [expanded, setExpanded] = useState(false);
   const meta = TOOL_LABELS[entry.name] || { label: entry.name, icon: "code-outline" };
 
+  // ─── Extract job_id for live progress tracking ────────────────
+  let jobId: string | null = null;
+  try {
+    const p = JSON.parse(entry.result);
+    if (p.job_id) jobId = p.job_id;
+  } catch {
+    // ignore
+  }
+
+  // ─── Preview text (collapsed) ─────────────────────────────────
   let resultPreview = "";
   try {
     const parsed = JSON.parse(entry.result);
     if (parsed.error) {
       resultPreview = `Error: ${parsed.error}`;
+    } else if (parsed.campaign_id && parsed.name) {
+      resultPreview = `Created "${parsed.name}"`;
     } else if (parsed.message) {
       resultPreview = parsed.message;
     } else if (parsed.job_id) {
-      resultPreview = `Job created: ${parsed.job_id.slice(0, 8)}...`;
+      resultPreview = `Job ${parsed.mode || parsed.type || ""}: ${parsed.job_id.slice(0, 8)}…`;
     } else if (Array.isArray(parsed)) {
       resultPreview = `${parsed.length} result${parsed.length !== 1 ? "s" : ""}`;
+    } else if (parsed.total_leads_in_campaign !== undefined) {
+      resultPreview = `${parsed.total_leads_in_campaign} leads, ${parsed.category_count || 0} categories`;
     } else if (parsed.total_leads !== undefined) {
       resultPreview = `${parsed.total_leads} total leads`;
     } else if (parsed.processed !== undefined) {
       resultPreview = `${parsed.processed} processed`;
+    } else if (parsed.will_process !== undefined) {
+      resultPreview = `Will process ${parsed.will_process} leads`;
     } else {
-      resultPreview = entry.result.slice(0, 100);
+      resultPreview = entry.result.slice(0, 120);
     }
   } catch {
-    resultPreview = entry.result.slice(0, 100);
+    resultPreview = entry.result.slice(0, 120);
+  }
+
+  // ─── Formatted expanded text ──────────────────────────────────
+  let formattedResult = "";
+  let isTruncated = false;
+  if (expanded) {
+    try {
+      const pretty = JSON.stringify(JSON.parse(entry.result), null, 2);
+      isTruncated = pretty.length > MAX_EXPANDED_CHARS;
+      formattedResult = isTruncated
+        ? pretty.slice(0, MAX_EXPANDED_CHARS)
+        : pretty;
+    } catch {
+      isTruncated = entry.result.length > MAX_EXPANDED_CHARS;
+      formattedResult = isTruncated
+        ? entry.result.slice(0, MAX_EXPANDED_CHARS)
+        : entry.result;
+    }
   }
 
   return (
@@ -88,9 +227,29 @@ function ToolCallCard({ entry }: { entry: AgentToolLogEntry }) {
             color="#64748b"
           />
         </View>
-        <Text className="text-xs text-slate-400 mt-1" numberOfLines={expanded ? undefined : 1}>
-          {expanded ? entry.result : resultPreview}
-        </Text>
+        {expanded ? (
+          <View style={{ maxHeight: 300 }}>
+            <Text
+              className="text-xs text-slate-400 mt-1"
+              style={{ fontFamily: Platform.OS === "web" ? "monospace" : undefined }}
+              selectable
+            >
+              {formattedResult}
+            </Text>
+            {isTruncated && (
+              <Text className="text-xs text-blue-400 mt-1">
+                … output truncated ({Math.round(entry.result.length / 1024)}KB total)
+              </Text>
+            )}
+          </View>
+        ) : (
+          <Text className="text-xs text-slate-400 mt-1" numberOfLines={1}>
+            {resultPreview}
+          </Text>
+        )}
+
+        {/* Live job progress bar — auto-polls while running */}
+        {jobId && <JobProgressBar jobId={jobId} />}
       </View>
     </Pressable>
   );
@@ -101,7 +260,6 @@ function MessageBubble({ msg }: { msg: DisplayMessage }) {
 
   return (
     <View className={`mb-3 ${isUser ? "items-end" : "items-start"}`}>
-      {/* Tool calls (shown before assistant reply) */}
       {msg.toolCalls && msg.toolCalls.length > 0 && (
         <View className="w-full max-w-[90%] mb-1">
           {msg.toolCalls.map((tc, i) => (
@@ -110,7 +268,6 @@ function MessageBubble({ msg }: { msg: DisplayMessage }) {
         </View>
       )}
 
-      {/* Message bubble */}
       {msg.content ? (
         <View
           className={`max-w-[85%] rounded-2xl px-4 py-3 ${
@@ -143,29 +300,224 @@ function TypingIndicator() {
   );
 }
 
+// ─── History Panel ───────────────────────────────────────────────────
+
+function HistoryPanel({
+  visible,
+  onClose,
+  onSelect,
+  onDelete,
+  activeId,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+  activeId: string | null;
+}) {
+  const { data: conversations, isLoading } = useAgentConversations();
+
+  if (!visible) return null;
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <Pressable className="flex-1" onPress={onClose}>
+        <View className="flex-1" />
+      </Pressable>
+      <View className="bg-card border-t border-border rounded-t-2xl max-h-[60%]">
+        {/* Header */}
+        <View className="flex-row items-center justify-between px-4 py-3 border-b border-border">
+          <Text className="text-base font-bold text-foreground">
+            Conversation History
+          </Text>
+          <Pressable onPress={onClose} hitSlop={8}>
+            <Ionicons name="close" size={22} color="#94a3b8" />
+          </Pressable>
+        </View>
+
+        {/* List */}
+        {isLoading ? (
+          <View className="py-8 items-center">
+            <ActivityIndicator size="small" color="#3b82f6" />
+          </View>
+        ) : !conversations?.length ? (
+          <View className="py-8 items-center">
+            <Ionicons name="chatbubbles-outline" size={32} color="#475569" />
+            <Text className="text-sm text-muted-foreground mt-2">
+              No conversations yet
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={conversations}
+            keyExtractor={(item) => item.id}
+            contentContainerClassName="pb-8"
+            renderItem={({ item }) => {
+              const isActive = item.id === activeId;
+              return (
+                <Pressable
+                  onPress={() => {
+                    onSelect(item.id);
+                    onClose();
+                  }}
+                  className={`px-4 py-3 border-b border-border/50 flex-row items-center ${
+                    isActive ? "bg-primary/10" : ""
+                  }`}
+                >
+                  <View className="flex-1 mr-3">
+                    <Text
+                      className="text-sm font-medium text-foreground"
+                      numberOfLines={1}
+                    >
+                      {item.title || "Untitled"}
+                    </Text>
+                    <Text className="text-xs text-muted-foreground mt-0.5">
+                      {item.message_count} messages · {timeAgo(item.updated_at)}
+                    </Text>
+                  </View>
+                  {isActive && (
+                    <View className="bg-primary/20 rounded-full px-2 py-0.5 mr-2">
+                      <Text className="text-xs text-primary">Active</Text>
+                    </View>
+                  )}
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      onDelete(item.id);
+                    }}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="trash-outline" size={16} color="#ef4444" />
+                  </Pressable>
+                </Pressable>
+              );
+            }}
+          />
+        )}
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Main Screen ─────────────────────────────────────────────────────
 
 export default function AgentScreen() {
+  // Conversation state
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [conversationHistory, setConversationHistory] = useState<AgentMessage[]>([]);
+  const [allToolLogs, setAllToolLogs] = useState<AgentToolLogEntry[]>([]);
   const [inputText, setInputText] = useState("");
+  const [historyVisible, setHistoryVisible] = useState(false);
+
   const flatListRef = useRef<FlatList>(null);
 
   const sendMutation = useSendAgentMessage();
+  const saveMutation = useSaveConversation();
+  const deleteMutation = useDeleteConversation();
 
+  // ─── New chat ───────────────────────────────────────────────────
+  const startNewChat = useCallback(() => {
+    setConversationId(null);
+    setMessages([]);
+    setConversationHistory([]);
+    setAllToolLogs([]);
+    setInputText("");
+  }, []);
+
+  // ─── Load conversation ──────────────────────────────────────────
+  const loadConversation = useCallback(async (id: string) => {
+    // We fetch full conversation data from the list query cache
+    // or directly from DB
+    try {
+      const { supabase } = await import("@/lib/supabase");
+      const { data, error } = await supabase
+        .from("agent_conversations")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (error || !data) return;
+
+      setConversationId(data.id);
+      setMessages((data.display_messages || []) as DisplayMessage[]);
+      setConversationHistory((data.messages || []) as AgentMessage[]);
+      setAllToolLogs((data.tool_log || []) as AgentToolLogEntry[]);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // ─── Delete conversation ────────────────────────────────────────
+  const handleDelete = useCallback(
+    (id: string) => {
+      deleteMutation.mutate(id);
+      if (id === conversationId) {
+        startNewChat();
+      }
+    },
+    [conversationId, deleteMutation, startNewChat],
+  );
+
+  // ─── Save conversation to DB ────────────────────────────────────
+  const saveToDb = useCallback(
+    (
+      currentId: string | null,
+      displayMsgs: DisplayMessage[],
+      history: AgentMessage[],
+      toolLogs: AgentToolLogEntry[],
+    ) => {
+      // Auto-title from first user message
+      const firstUserMsg = displayMsgs.find((m) => m.role === "user");
+      const title = firstUserMsg
+        ? firstUserMsg.content.slice(0, 80)
+        : "New conversation";
+
+      const userMsgCount = displayMsgs.filter(
+        (m) => m.role === "user",
+      ).length;
+
+      saveMutation.mutate(
+        {
+          id: currentId || undefined,
+          title,
+          messages: history,
+          tool_log: toolLogs,
+          display_messages: displayMsgs,
+          message_count: userMsgCount,
+        },
+        {
+          onSuccess: (saved) => {
+            // Capture the conversation ID if this was a new conversation
+            if (!currentId && saved?.id) {
+              setConversationId(saved.id);
+            }
+          },
+        },
+      );
+    },
+    [saveMutation],
+  );
+
+  // ─── Send message ──────────────────────────────────────────────
   const sendMessage = useCallback(() => {
     const text = inputText.trim();
     if (!text || sendMutation.isPending) return;
 
-    // Add user message to display
     const userDisplayMsg: DisplayMessage = {
       id: `user-${Date.now()}`,
       role: "user",
       content: text,
     };
-    setMessages((prev) => [...prev, userDisplayMsg]);
 
-    // Build conversation for API
+    const newDisplayMessages = [...messages, userDisplayMsg];
+    setMessages(newDisplayMessages);
+
     const newHistory: AgentMessage[] = [
       ...conversationHistory,
       { role: "user", content: text },
@@ -174,30 +526,42 @@ export default function AgentScreen() {
     setInputText("");
 
     sendMutation.mutate(
-      { messages: newHistory },
+      { messages: newHistory, conversation_id: conversationId || undefined },
       {
         onSuccess: (response) => {
-          // Extract the final assistant message and tool log
           const assistantMsgs = response.messages.filter(
-            (m) => m.role === "assistant" && m.content
+            (m) => m.role === "assistant" && m.content,
           );
           const lastAssistant = assistantMsgs[assistantMsgs.length - 1];
 
           const assistantDisplayMsg: DisplayMessage = {
             id: `assistant-${Date.now()}`,
             role: "assistant",
-            content: lastAssistant?.content || "I couldn't process that request.",
-            toolCalls: response.tool_log.length > 0 ? response.tool_log : undefined,
+            content:
+              lastAssistant?.content || "I couldn't process that request.",
+            toolCalls:
+              response.tool_log.length > 0 ? response.tool_log : undefined,
           };
 
-          setMessages((prev) => [...prev, assistantDisplayMsg]);
+          const updatedDisplay = [...newDisplayMessages, assistantDisplayMsg];
+          // Save the FULL conversation messages from the Edge Function.
+          // This preserves tool_calls, tool results, and all context so
+          // the agent can properly resume conversations with full awareness
+          // of campaign IDs, job IDs, and prior tool interactions.
+          const updatedHistory = response.messages;
+          const updatedToolLogs = [...allToolLogs, ...response.tool_log];
 
-          // Update conversation history: user message + assistant response only
-          // (tools are handled server-side, we just keep the user/assistant turns)
-          setConversationHistory([
-            ...newHistory,
-            { role: "assistant", content: lastAssistant?.content || "" },
-          ]);
+          setMessages(updatedDisplay);
+          setConversationHistory(updatedHistory);
+          setAllToolLogs(updatedToolLogs);
+
+          // Auto-save
+          saveToDb(
+            conversationId,
+            updatedDisplay,
+            updatedHistory,
+            updatedToolLogs,
+          );
         },
         onError: (error) => {
           const errorMsg: DisplayMessage = {
@@ -207,14 +571,29 @@ export default function AgentScreen() {
           };
           setMessages((prev) => [...prev, errorMsg]);
         },
-      }
+      },
     );
-  }, [inputText, conversationHistory, sendMutation]);
+  }, [
+    inputText,
+    messages,
+    conversationHistory,
+    allToolLogs,
+    conversationId,
+    sendMutation,
+    saveToDb,
+  ]);
+
+  // ─── Enter to send (web) ───────────────────────────────────────
+  const isWeb = Platform.OS === "web";
 
   const renderMessage = useCallback(
     ({ item }: { item: DisplayMessage }) => <MessageBubble msg={item} />,
-    []
+    [],
   );
+
+  // Derive chat title for header
+  const chatTitle =
+    messages.find((m) => m.role === "user")?.content.slice(0, 40) || null;
 
   return (
     <KeyboardAvoidingView
@@ -222,7 +601,34 @@ export default function AgentScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
     >
-      {/* Messages */}
+      {/* ─── Chat Header ─── */}
+      <View className="flex-row items-center px-4 py-2 border-b border-border bg-card">
+        <Pressable
+          onPress={() => setHistoryVisible(true)}
+          hitSlop={8}
+          className="mr-3"
+        >
+          <Ionicons name="time-outline" size={22} color="#94a3b8" />
+        </Pressable>
+        <View className="flex-1">
+          <Text
+            className="text-sm font-medium text-foreground"
+            numberOfLines={1}
+          >
+            {chatTitle || "New Chat"}
+          </Text>
+          {conversationId && (
+            <Text className="text-xs text-muted-foreground">
+              Continuing conversation
+            </Text>
+          )}
+        </View>
+        <Pressable onPress={startNewChat} hitSlop={8}>
+          <Ionicons name="add-circle-outline" size={22} color="#3b82f6" />
+        </Pressable>
+      </View>
+
+      {/* ─── Messages ─── */}
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -238,13 +644,18 @@ export default function AgentScreen() {
         ListEmptyComponent={
           <View className="items-center justify-center py-20">
             <View className="bg-card border border-border rounded-full p-5 mb-4">
-              <Ionicons name="chatbubble-ellipses-outline" size={40} color="#3b82f6" />
+              <Ionicons
+                name="chatbubble-ellipses-outline"
+                size={40}
+                color="#3b82f6"
+              />
             </View>
             <Text className="text-lg font-bold text-foreground mb-1">
               Pipeline Agent
             </Text>
             <Text className="text-sm text-muted-foreground text-center px-8 mb-6">
-              I can run your enrichment pipeline. Tell me which campaign to work on and what to do.
+              I can run your enrichment pipeline. Tell me which campaign to work
+              on and what to do.
             </Text>
             <Card className="mx-4 w-full">
               <View className="px-1">
@@ -259,9 +670,7 @@ export default function AgentScreen() {
                 ].map((suggestion) => (
                   <Pressable
                     key={suggestion}
-                    onPress={() => {
-                      setInputText(suggestion);
-                    }}
+                    onPress={() => setInputText(suggestion)}
                     className="py-2 border-b border-border/50"
                   >
                     <Text className="text-sm text-blue-400">{suggestion}</Text>
@@ -271,10 +680,12 @@ export default function AgentScreen() {
             </Card>
           </View>
         }
-        ListFooterComponent={sendMutation.isPending ? <TypingIndicator /> : null}
+        ListFooterComponent={
+          sendMutation.isPending ? <TypingIndicator /> : null
+        }
       />
 
-      {/* Input bar */}
+      {/* ─── Input bar ─── */}
       <View className="border-t border-border bg-card px-4 py-3">
         <View className="flex-row items-end">
           <TextInput
@@ -282,11 +693,11 @@ export default function AgentScreen() {
             onChangeText={setInputText}
             placeholder="Ask the agent..."
             placeholderTextColor="#64748b"
-            multiline
+            multiline={!isWeb}
             maxLength={2000}
-            returnKeyType="default"
+            returnKeyType="send"
             onSubmitEditing={sendMessage}
-            blurOnSubmit={false}
+            blurOnSubmit={isWeb}
             className="flex-1 min-h-[40px] max-h-[120px] rounded-xl border border-input bg-background px-4 py-2.5 text-foreground text-sm mr-2"
           />
           <Pressable
@@ -306,6 +717,15 @@ export default function AgentScreen() {
           </Pressable>
         </View>
       </View>
+
+      {/* ─── History Modal ─── */}
+      <HistoryPanel
+        visible={historyVisible}
+        onClose={() => setHistoryVisible(false)}
+        onSelect={loadConversation}
+        onDelete={handleDelete}
+        activeId={conversationId}
+      />
     </KeyboardAvoidingView>
   );
 }

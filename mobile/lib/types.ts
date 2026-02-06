@@ -121,6 +121,7 @@ export interface AgentToolDefaults {
   sample_leads_default: number;
   sample_leads_max: number;
   active_jobs_limit: number;
+  conversation_retention_days: number;
 }
 
 export interface AgentConfig {
@@ -159,6 +160,23 @@ export interface AgentToolLogEntry {
 export interface AgentResponse {
   messages: AgentMessage[];
   tool_log: AgentToolLogEntry[];
+  conversation_id?: string;
+}
+
+export interface AgentConversation {
+  id: string;
+  title: string;
+  messages: AgentMessage[];
+  tool_log: AgentToolLogEntry[];
+  display_messages: {
+    id: string;
+    role: "user" | "assistant";
+    content: string;
+    toolCalls?: AgentToolLogEntry[];
+  }[];
+  message_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 // Supabase Database type for typed client
@@ -194,6 +212,11 @@ export interface Database {
         Row: AppSettings;
         Insert: Partial<AppSettings>;
         Update: Partial<AppSettings>;
+      };
+      agent_conversations: {
+        Row: AgentConversation;
+        Insert: Omit<AgentConversation, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<AgentConversation, "id">>;
       };
     };
   };

@@ -54,7 +54,7 @@ interface AgentConfig {
 const DEFAULT_SYSTEM_PROMPT = `You are the Cold Email Ninja assistant — an AI that helps users run lead enrichment pipelines.
 
 You have tools to:
-- List campaigns and check their stats
+- Create new campaigns and list existing ones with their stats
 - Run pipeline steps: scrape → clean → find emails → find decision makers → casualise names
 - Check job progress
 
@@ -63,7 +63,8 @@ You have tools to:
 You MUST follow these confirmation rules for every pipeline step. NEVER skip them.
 
 ### 1. Scrape Google Maps
-- ALWAYS run with test_only=true FIRST. This scrapes only 20 leads as a quality check.
+- If the user asks to SEE or SHOW existing leads/categories, use get_sample_leads directly — do NOT start a new scrape.
+- When STARTING a scrape, ALWAYS run with test_only=true FIRST. This scrapes only 20 leads as a quality check.
 - After the QA job completes, call get_sample_leads to fetch the results.
 - Present the sample leads AND the category breakdown to the user.
 - The category breakdown shows Google Maps categories found (e.g. "Plumber: 12", "Plumbing supply store: 3", "Water heater installer: 5").
@@ -94,13 +95,17 @@ You MUST follow these confirmation rules for every pipeline step. NEVER skip the
 - No confirmation needed. Runs inline, free, completes immediately.
 
 ## General Rules
+- If the user wants to work with a NEW campaign, use create_campaign to create it first. Don't try to scrape with a campaign name that doesn't exist.
 - Always confirm which campaign to operate on before running tools. Use list_campaigns if unsure.
+- When a user asks to "show", "see", or "review" existing data, use read-only tools (get_sample_leads, get_campaign_stats, get_active_jobs) — do NOT start new pipeline jobs.
 - Pipeline steps should run in order: scrape → clean → find emails → find decision makers → casualise names
 - Scrape, clean, find_emails, and find_decision_makers are ASYNC — they create background jobs. Tell the user to check the Jobs tab or ask you for status.
 - When creating a scrape job, always ask for keywords if not provided.
 - Be concise but helpful. Report job IDs and eligible lead counts after each step.`;
 
 const DEFAULT_TOOL_DESCRIPTIONS: Record<string, string> = {
+  create_campaign:
+    "Create a new campaign. Use this when the user wants to start fresh with a new campaign for scraping. Requires a name; service_line is optional.",
   list_campaigns:
     "List all campaigns with their lead counts. Use this to help the user pick a campaign.",
   get_campaign_stats:
@@ -190,6 +195,28 @@ function buildTools(config: AgentConfig) {
   const defs = config.defaults;
 
   return [
+    {
+      type: "function" as const,
+      function: {
+        name: "create_campaign",
+        description: desc.create_campaign,
+        parameters: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              description: "Name of the campaign (e.g. 'Beauty Salons US')",
+            },
+            service_line: {
+              type: "string",
+              description:
+                "The service/industry line (e.g. 'Beauty Salons'). Defaults to the campaign name.",
+            },
+          },
+          required: ["name"],
+        },
+      },
+    },
     {
       type: "function" as const,
       function: {
@@ -385,6 +412,8 @@ async function handleToolCall(
   defaults: AgentDefaults,
 ): Promise<string> {
   switch (toolName) {
+    case "create_campaign":
+      return await toolCreateCampaign(supabase, args);
     case "list_campaigns":
       return await toolListCampaigns(supabase);
     case "get_campaign_stats":
@@ -408,22 +437,60 @@ async function handleToolCall(
   }
 }
 
+// deno-lint-ignore no-explicit-any
+async function toolCreateCampaign(
+  supabase: SupabaseClient,
+  args: Record<string, any>,
+): Promise<string> {
+  const { name, service_line } = args;
+
+  if (!name) return JSON.stringify({ error: "Campaign name is required" });
+
+  const svcLine = service_line || name;
+
+  const { data: campaign, error } = await supabase
+    .from("campaigns")
+    .insert({
+      name,
+      service_line: svcLine,
+      summarize_prompt:
+        "Summarize the company and what they do in 1-2 sentences.",
+      icebreaker_prompt:
+        "Write a casual, friendly icebreaker line mentioning something specific about the company.",
+      status: "active",
+    })
+    .select()
+    .single();
+
+  if (error) return JSON.stringify({ error: error.message });
+  return JSON.stringify({
+    campaign_id: campaign.id,
+    name: campaign.name,
+    service_line: campaign.service_line,
+    status: campaign.status,
+    message: `Campaign "${campaign.name}" created successfully with ID ${campaign.id}.`,
+  });
+}
+
 async function toolListCampaigns(supabase: SupabaseClient): Promise<string> {
+  // Use join-based count instead of N+1 queries for scalability
+  // Explicit FK hint avoids PostgREST ambiguity when multiple relations exist
   const { data: campaigns, error } = await supabase
     .from("campaigns")
-    .select("id, name, service_line, status, created_at")
+    .select("id, name, service_line, status, created_at, leads:leads!campaign_id(count)")
     .order("created_at", { ascending: false });
   if (error) return JSON.stringify({ error: error.message });
 
-  // Get lead counts per campaign
-  const results = [];
-  for (const c of campaigns || []) {
-    const { count } = await supabase
-      .from("leads")
-      .select("id", { count: "exact", head: true })
-      .eq("campaign_id", c.id);
-    results.push({ ...c, lead_count: count || 0 });
-  }
+  // Flatten the count from the join
+  // deno-lint-ignore no-explicit-any
+  const results = (campaigns || []).map((c: any) => ({
+    id: c.id,
+    name: c.name,
+    service_line: c.service_line,
+    status: c.status,
+    created_at: c.created_at,
+    lead_count: c.leads?.[0]?.count ?? 0,
+  }));
   return JSON.stringify(results);
 }
 
@@ -839,7 +906,7 @@ async function toolGetSampleLeads(
   const { data: leads, error } = await supabase
     .from("leads")
     .select(
-      "company_name, company_website, title, city, state, phone, email, rating, reviews",
+      "company_name, company_website, category, city, state, phone, email, rating, reviews",
     )
     .eq("campaign_id", campaignId)
     .order("created_at", { ascending: false })
@@ -852,22 +919,26 @@ async function toolGetSampleLeads(
       message: "No leads found for this campaign.",
     });
 
-  // Get full category breakdown from ALL leads in the campaign (not just the sample)
-  const { data: allLeads, error: catErr } = await supabase
+  // Get category breakdown from all leads (category column, comma-separated).
+  // Fetches only the category column to minimise data transfer even at 100k+ leads.
+  // TODO: Switch to RPC get_lead_category_counts once schema resolution is verified.
+  const { data: allCats, error: catErr } = await supabase
     .from("leads")
-    .select("title")
+    .select("category")
     .eq("campaign_id", campaignId)
-    .not("title", "is", null);
+    .not("category", "is", null);
 
   const categoryBreakdown: Record<string, number> = {};
-  if (!catErr && allLeads) {
-    for (const l of allLeads) {
-      const cat = l.title || "Unknown";
-      categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
+  if (!catErr && allCats) {
+    for (const row of allCats) {
+      // Split comma-separated categories and count each individually
+      const cats = (row.category as string).split(",").map((c: string) => c.trim()).filter(Boolean);
+      for (const cat of cats) {
+        categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + 1;
+      }
     }
   }
 
-  // Sort categories by count descending
   const sortedCategories = Object.entries(categoryBreakdown)
     .sort((a, b) => b[1] - a[1])
     .map(([name, count]) => ({ name, count }));
@@ -884,7 +955,7 @@ async function toolGetSampleLeads(
     leads: leads.map((l: Record<string, unknown>) => ({
       company: l.company_name,
       website: l.company_website,
-      category: l.title,
+      category: l.category,
       location: [l.city, l.state].filter(Boolean).join(", "),
       phone: l.phone,
       email: l.email,

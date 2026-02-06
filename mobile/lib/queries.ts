@@ -4,7 +4,10 @@
  */
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase, invokeFunction } from "./supabase";
-import type { Campaign, Lead, BulkJob, AgentMessage, AgentResponse, AgentConfig } from "./types";
+import type {
+  Campaign, Lead, BulkJob,
+  AgentMessage, AgentResponse, AgentConfig, AgentConversation,
+} from "./types";
 
 // Lean field selection for list rendering (10 fields instead of 40+)
 const LEAD_LIST_FIELDS =
@@ -301,6 +304,42 @@ export function useBulkJobs(campaignId?: string) {
   });
 }
 
+// ==================== JOB PROGRESS (live polling) ====================
+
+/**
+ * Poll a single bulk_job by ID every 2s while it's running.
+ * Stops automatically when the job reaches a terminal state.
+ */
+export function useJobProgress(jobId: string | null) {
+  return useQuery({
+    queryKey: ["job_progress", jobId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("bulk_jobs")
+        .select("id, type, status, progress, error, started_at, completed_at")
+        .eq("id", jobId!)
+        .single();
+      if (error) throw error;
+      return data as Pick<
+        BulkJob,
+        "id" | "type" | "status" | "progress" | "error" | "started_at" | "completed_at"
+      >;
+    },
+    enabled: !!jobId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (
+        status === "completed" ||
+        status === "failed" ||
+        status === "cancelled"
+      ) {
+        return false; // stop polling
+      }
+      return 2000; // poll every 2s
+    },
+  });
+}
+
 // ==================== ACTIONS (Edge Functions) ====================
 
 export function useTriggerScrape() {
@@ -492,10 +531,112 @@ export function useSendAgentMessage() {
   return useMutation({
     mutationFn: (params: {
       messages: AgentMessage[];
+      conversation_id?: string;
     }) => invokeFunction<AgentResponse>("ai-agent", params),
     onSuccess: () => {
-      // Invalidate jobs/leads since tools may have created jobs or modified leads
       queryClient.invalidateQueries({ queryKey: ["bulk_jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["agent_conversations"] });
+    },
+  });
+}
+
+// ==================== AGENT CONVERSATIONS ====================
+
+export function useAgentConversations() {
+  return useQuery({
+    queryKey: ["agent_conversations"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("agent_conversations")
+        .select("id, title, message_count, created_at, updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return data as Pick<AgentConversation, "id" | "title" | "message_count" | "created_at" | "updated_at">[];
+    },
+  });
+}
+
+export function useAgentConversation(id: string | null) {
+  return useQuery({
+    queryKey: ["agent_conversation", id],
+    queryFn: async () => {
+      if (!id) return null;
+      const { data, error } = await supabase
+        .from("agent_conversations")
+        .select("*")
+        .eq("id", id)
+        .single();
+      if (error) throw error;
+      return data as AgentConversation;
+    },
+    enabled: !!id,
+  });
+}
+
+export function useSaveConversation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      id?: string;
+      title: string;
+      messages: AgentMessage[];
+      tool_log: unknown[];
+      display_messages: unknown[];
+      message_count: number;
+    }) => {
+      if (params.id) {
+        // Update existing
+        const { data, error } = await supabase
+          .from("agent_conversations")
+          .update({
+            title: params.title,
+            messages: params.messages,
+            tool_log: params.tool_log,
+            display_messages: params.display_messages,
+            message_count: params.message_count,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", params.id)
+          .select()
+          .single();
+        if (error) throw error;
+        return data as AgentConversation;
+      } else {
+        // Create new
+        const { data, error } = await supabase
+          .from("agent_conversations")
+          .insert({
+            title: params.title,
+            messages: params.messages,
+            tool_log: params.tool_log,
+            display_messages: params.display_messages,
+            message_count: params.message_count,
+          })
+          .select()
+          .single();
+        if (error) throw error;
+        return data as AgentConversation;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agent_conversations"] });
+    },
+  });
+}
+
+export function useDeleteConversation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("agent_conversations")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["agent_conversations"] });
     },
   });
 }

@@ -25,6 +25,7 @@ const API_SERVICES = [
 ];
 
 const TOOL_LABELS: Record<string, string> = {
+  create_campaign: "Create Campaign",
   list_campaigns: "List Campaigns",
   get_campaign_stats: "Get Campaign Stats",
   scrape_google_maps: "Scrape Google Maps",
@@ -50,6 +51,7 @@ const DEFAULT_LABELS: Record<keyof AgentToolDefaults, string> = {
   sample_leads_default: "Sample: Default Limit",
   sample_leads_max: "Sample: Max Limit",
   active_jobs_limit: "Jobs: Display Limit",
+  conversation_retention_days: "Chat History: Retention (days)",
 };
 
 // ─── Collapsible Section ────────────────────────────────────────────
