@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+mobile/node_modules/
+
+# Expo
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+
+# Environment
+mobile/.env
+workers/.env
+
+# Temp/cache
+.tmp/
+*.log
+/tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.playwright-mcp/
+*.png
+
+# Playwright (root-level test deps)
+/package.json
+/package-lock.json
+/node_modules/
+test-flows.mjs
+test-inspect.mjs

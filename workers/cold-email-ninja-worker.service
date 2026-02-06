@@ -1,0 +1,15 @@
+[Unit]
+Description=Cold Email Ninja Worker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/cold-email-ninja-app/workers
+ExecStart=/usr/bin/python3 worker.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

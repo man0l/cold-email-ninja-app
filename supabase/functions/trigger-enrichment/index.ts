@@ -1,0 +1,92 @@
+/**
+ * Edge Function: trigger-enrichment
+ * Creates a bulk_job for batch enrichment -> Contabo worker
+ * Supports: find_emails, find_decision_makers, anymail_emails
+ * Directives: find_emails.md, find_decision_makers.md, anymail_find_emails.md
+ */
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+
+const VALID_TYPES = [
+  "find_emails",          // OpenWeb Ninja -> emails, phones, socials
+  "find_decision_makers", // Waterfall: about pages -> ToS -> LinkedIn
+  "anymail_emails",       // Anymail Finder -> decision_maker_email
+];
+
+Deno.serve(async (req: Request) => {
+  const corsResp = handleCors(req);
+  if (corsResp) return corsResp;
+
+  if (req.method !== "POST") {
+    return errorResponse("Method not allowed", 405);
+  }
+
+  const supabase = getSupabaseClient(req);
+
+  try {
+    const {
+      campaign_id,
+      type,
+      max_leads = 100,
+      include_existing = false,
+      config = {},
+    } = await req.json();
+
+    if (!campaign_id) return errorResponse("campaign_id required");
+    if (!type || !VALID_TYPES.includes(type)) {
+      return errorResponse(`type must be one of: ${VALID_TYPES.join(", ")}`);
+    }
+
+    // Verify campaign exists
+    const { data: campaign, error: campErr } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("id", campaign_id)
+      .single();
+    if (campErr || !campaign) return errorResponse("Campaign not found", 404);
+
+    // Estimate cost by counting eligible leads
+    let countQuery = supabase
+      .from("leads")
+      .select("id", { count: "exact" })
+      .eq("campaign_id", campaign_id);
+
+    // Filter based on enrichment type
+    if (type === "find_emails" && !include_existing) {
+      countQuery = countQuery.is("email", null);
+    } else if (type === "find_decision_makers" && !include_existing) {
+      countQuery = countQuery.is("decision_maker_name", null);
+    } else if (type === "anymail_emails" && !include_existing) {
+      countQuery = countQuery.is("decision_maker_email", null);
+    }
+
+    const { count } = await countQuery.limit(max_leads);
+    const eligibleCount = Math.min(count || 0, max_leads);
+
+    // Create bulk job
+    const { data: job, error } = await supabase
+      .from("bulk_jobs")
+      .insert({
+        campaign_id,
+        type,
+        config: {
+          max_leads,
+          include_existing,
+          estimated_leads: eligibleCount,
+          ...config,
+        },
+      })
+      .select()
+      .single();
+
+    if (error) return errorResponse(error.message);
+
+    return jsonResponse({
+      job,
+      eligible_leads: eligibleCount,
+      message: `${type} job created. Contabo worker will process ${eligibleCount} leads.`,
+    }, 201);
+  } catch (err) {
+    return errorResponse(String(err), 500);
+  }
+});
