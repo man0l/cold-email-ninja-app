@@ -64,7 +64,7 @@ You MUST follow these confirmation rules for every pipeline step. NEVER skip the
 
 ### 1. Scrape Google Maps
 - If the user asks to SEE or SHOW existing leads/categories, use get_sample_leads directly — do NOT start a new scrape.
-- When STARTING a scrape, ALWAYS run with test_only=true FIRST. This scrapes only 20 leads as a quality check.
+- When STARTING a scrape, IMMEDIATELY call scrape_google_maps with test_only=true. Do NOT ask for confirmation before the QA test — the QA test IS the safe first step (only 20 leads). Just run it right away.
 - After the QA job completes, call get_sample_leads to fetch the results.
 - Present the sample leads AND the category breakdown to the user.
 - The category breakdown shows Google Maps categories found (e.g. "Plumber: 12", "Plumbing supply store: 3", "Water heater installer: 5").
@@ -986,7 +986,12 @@ async function toolGetActiveJobs(
   return JSON.stringify(data || []);
 }
 
-// ─── OpenAI Chat Completions caller ──────────────────────────────────
+// ─── OpenAI API callers ──────────────────────────────────────────────
+
+/** Codex models only support /v1/responses, not /v1/chat/completions */
+function isResponsesModel(model: string): boolean {
+  return model.includes("codex");
+}
 
 interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -996,6 +1001,8 @@ interface ChatMessage {
   tool_call_id?: string;
   name?: string;
 }
+
+// ── Chat Completions API (/v1/chat/completions) ──
 
 async function callOpenAI(
   apiKey: string,
@@ -1028,6 +1035,182 @@ async function callOpenAI(
     message: data.choices[0].message,
     usage: data.usage,
   };
+}
+
+// ── Responses API (/v1/responses) for codex models ──
+
+function buildResponsesTools(config: AgentConfig) {
+  // Responses API uses a flatter tool format: { type, name, description, parameters }
+  return buildTools(config).map((t) => ({
+    type: "function" as const,
+    name: t.function.name,
+    description: t.function.description,
+    parameters: t.function.parameters,
+  }));
+}
+
+// deno-lint-ignore no-explicit-any
+interface ResponsesResult {
+  // deno-lint-ignore no-explicit-any
+  output: any[];
+  id: string;
+  // deno-lint-ignore no-explicit-any
+  usage?: any;
+}
+
+async function callOpenAIResponses(
+  apiKey: string,
+  // deno-lint-ignore no-explicit-any
+  input: any,
+  config: AgentConfig,
+  instructions: string,
+  previousResponseId?: string,
+): Promise<ResponsesResult> {
+  const tools = buildResponsesTools(config);
+
+  // deno-lint-ignore no-explicit-any
+  const body: Record<string, any> = {
+    model: config.model,
+    input,
+    tools,
+  };
+  // Only set instructions on the first call; subsequent calls use previous_response_id
+  if (!previousResponseId) {
+    body.instructions = instructions;
+  } else {
+    body.previous_response_id = previousResponseId;
+  }
+
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenAI Responses API error ${res.status}: ${text}`);
+  }
+
+  return await res.json();
+}
+
+/**
+ * Run the agentic loop using the Responses API.
+ * Returns { messages, toolLog } in the same shape as the chat completions path
+ * so the caller doesn't need to care which API was used.
+ */
+async function runResponsesLoop(
+  apiKey: string,
+  incomingMessages: ChatMessage[],
+  config: AgentConfig,
+  supabase: SupabaseClient,
+): Promise<{
+  messages: ChatMessage[];
+  toolLog: { name: string; args: Record<string, unknown>; result: string }[];
+}> {
+  const toolLog: { name: string; args: Record<string, unknown>; result: string }[] = [];
+
+  // Build the initial user input from incoming messages
+  // The Responses API takes a plain string or array of content items
+  const userMessages = incomingMessages.filter((m) => m.role === "user");
+  const lastUserMsg = userMessages[userMessages.length - 1]?.content || "";
+
+  // First call
+  let resp = await callOpenAIResponses(
+    apiKey,
+    lastUserMsg,
+    config,
+    config.system_prompt,
+  );
+
+  let iterations = 0;
+
+  while (iterations < config.max_iterations) {
+    iterations++;
+
+    // Check if there are function_call items in the output
+    // deno-lint-ignore no-explicit-any
+    const fnCalls = resp.output.filter((item: any) => item.type === "function_call");
+
+    if (fnCalls.length === 0) {
+      // No tool calls — we're done
+      break;
+    }
+
+    // Execute each function call and build tool results
+    // deno-lint-ignore no-explicit-any
+    const toolResults: any[] = [];
+    for (const fc of fnCalls) {
+      let fnArgs: Record<string, unknown> = {};
+      try {
+        fnArgs = JSON.parse(fc.arguments || "{}");
+      } catch {
+        fnArgs = {};
+      }
+
+      const result = await handleToolCall(fc.name, fnArgs, supabase, config.defaults);
+      toolLog.push({ name: fc.name, args: fnArgs, result });
+
+      toolResults.push({
+        type: "function_call_output",
+        call_id: fc.call_id,
+        output: result,
+      });
+    }
+
+    // Continue the conversation with tool results
+    resp = await callOpenAIResponses(
+      apiKey,
+      toolResults,
+      config,
+      config.system_prompt,
+      resp.id,
+    );
+  }
+
+  // Extract the final assistant text from output
+  let assistantText = "";
+  for (const item of resp.output) {
+    if (item.type === "message" && item.content) {
+      for (const part of item.content) {
+        if (part.type === "output_text" || part.type === "text") {
+          assistantText += part.text || "";
+        }
+      }
+    }
+  }
+
+  // Build a messages array compatible with the chat completions response format
+  const messages: ChatMessage[] = [
+    ...incomingMessages,
+    { role: "assistant", content: assistantText || null },
+  ];
+
+  // Insert tool call / tool result messages for transparency
+  for (const entry of toolLog) {
+    messages.splice(messages.length - 1, 0, {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: `responses_${entry.name}`,
+          type: "function",
+          function: { name: entry.name, arguments: JSON.stringify(entry.args) },
+        },
+      ],
+    });
+    messages.splice(messages.length - 1, 0, {
+      role: "tool",
+      tool_call_id: `responses_${entry.name}`,
+      content: entry.result,
+    });
+  }
+
+  return { messages, toolLog };
 }
 
 // ─── Main handler ────────────────────────────────────────────────────
@@ -1065,6 +1248,24 @@ Deno.serve(async (req: Request) => {
         422,
       );
     }
+
+    // Route to the correct API based on model type
+    if (isResponsesModel(config.model)) {
+      // ── Responses API path (codex models) ──
+      const { messages: responseMessages, toolLog } = await runResponsesLoop(
+        keyRow.api_key,
+        incomingMessages,
+        config,
+        supabase,
+      );
+
+      return jsonResponse({
+        messages: responseMessages,
+        tool_log: toolLog,
+      });
+    }
+
+    // ── Chat Completions API path (default) ──
 
     // Build conversation with system prompt
     const conversation: ChatMessage[] = [
