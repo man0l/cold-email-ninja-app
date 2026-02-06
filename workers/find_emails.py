@@ -85,6 +85,11 @@ class FindEmailsWorker(SupabaseWorkerBase):
                     if contacts:
                         updates = self._map_contacts(contacts)
                         if updates:
+                            # Merge with existing enrichment_status (preserve website_validated etc.)
+                            updates["enrichment_status"] = {
+                                **(lead.get("enrichment_status") or {}),
+                                "find_emails": "done",
+                            }
                             self.update_lead(lead["id"], updates)
                             enriched += 1
                 except Exception as e:
@@ -167,10 +172,5 @@ class FindEmailsWorker(SupabaseWorkerBase):
                 key = f"social_{platform.lower()}"
                 if key in ("social_facebook", "social_instagram", "social_linkedin", "social_twitter"):
                     updates[key] = url
-
-        if updates:
-            updates["enrichment_status"] = {
-                "find_emails": "done",
-            }
 
         return updates
