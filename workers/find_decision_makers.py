@@ -11,6 +11,7 @@ Job config:
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, urljoin
 
@@ -69,37 +70,52 @@ class FindDecisionMakersWorker(SupabaseWorkerBase):
         processed = 0
         found = 0
 
-        for lead in leads:
-            processed += 1
-            website = lead.get("company_website") or lead.get("domain", "")
-            if not website.startswith("http"):
-                website = f"https://{website}"
+        # Process leads concurrently (5 at a time) for much better throughput
+        CONCURRENT = 5
+        with ThreadPoolExecutor(max_workers=CONCURRENT) as executor:
+            futures = {}
+            for lead in leads:
+                website = lead.get("company_website") or lead.get("domain", "")
+                if not website.startswith("http"):
+                    website = f"https://{website}"
+                base_url = self._get_base_url(website)
+                future = executor.submit(self._find_from_website, base_url, openai_key)
+                futures[future] = lead
 
-            # Strip tracking params / paths from Google Maps URLs to get base domain
-            base_url = self._get_base_url(website)
+            for future in as_completed(futures):
+                lead = futures[future]
+                processed += 1
 
-            dm_info = self._find_from_website(base_url, openai_key)
+                try:
+                    dm_info = future.result()
+                    if dm_info:
+                        self.update_lead(lead["id"], {
+                            **dm_info,
+                            "enrichment_status": {
+                                **(lead.get("enrichment_status") or {}),
+                                "find_decision_makers": "done",
+                            },
+                        })
+                        found += 1
+                        logger.info(f"  Found: {dm_info.get('decision_maker_name')} at {lead.get('company_name', '?')}")
+                    else:
+                        self.update_lead(lead["id"], {
+                            "enrichment_status": {
+                                **(lead.get("enrichment_status") or {}),
+                                "find_decision_makers": "not_found",
+                            },
+                        })
+                except Exception as e:
+                    logger.warning(f"Error processing {lead.get('company_name', '?')}: {e}")
+                    self.update_lead(lead["id"], {
+                        "enrichment_status": {
+                            **(lead.get("enrichment_status") or {}),
+                            "find_decision_makers": "error",
+                        },
+                    })
 
-            if dm_info:
-                self.update_lead(lead["id"], {
-                    **dm_info,
-                    "enrichment_status": {
-                        **(lead.get("enrichment_status") or {}),
-                        "find_decision_makers": "done",
-                    },
-                })
-                found += 1
-                logger.info(f"  Found: {dm_info.get('decision_maker_name')} at {lead.get('company_name', '?')}")
-            else:
-                self.update_lead(lead["id"], {
-                    "enrichment_status": {
-                        **(lead.get("enrichment_status") or {}),
-                        "find_decision_makers": "not_found",
-                    },
-                })
-
-            if processed % 5 == 0:
-                self.update_progress(processed, len(leads), found=found)
+                if processed % 5 == 0:
+                    self.update_progress(processed, len(leads), found=found)
 
         self.update_progress(processed, len(leads), found=found)
         self.complete({"processed": processed, "found": found, "total": len(leads)})
