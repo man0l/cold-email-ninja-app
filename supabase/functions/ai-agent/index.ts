@@ -98,7 +98,9 @@ You MUST follow these confirmation rules for every pipeline step. NEVER skip the
 - If the user wants to work with a NEW campaign, use create_campaign to create it first. Don't try to scrape with a campaign name that doesn't exist.
 - Always confirm which campaign to operate on before running tools. Use list_campaigns if unsure.
 - When a user asks to "show", "see", or "review" existing data, use read-only tools (get_sample_leads, get_campaign_stats, get_active_jobs) — do NOT start new pipeline jobs.
-- Pipeline steps should run in order: scrape → clean → find emails → find decision makers → casualise names
+- Pipeline steps MUST run in order: scrape → clean → find emails → find decision makers → casualise names
+- Clean & Validate is a PREREQUISITE for Find Emails and Find Decision Makers. These paid steps only process leads with validated websites. If no validated leads exist, tell the user to run Clean & Validate first.
+- When a full scrape starts (test_only=false), QA sample leads are automatically deleted first to avoid duplicates.
 - Scrape, clean, find_emails, and find_decision_makers are ASYNC — they create background jobs. Tell the user to check the Jobs tab or ask you for status.
 - When creating a scrape job, always ask for keywords if not provided.
 - Be concise but helpful. Report job IDs and eligible lead counts after each step.`;
@@ -555,6 +557,25 @@ async function toolScrapeGoogleMaps(
 
   const scrapeLimit = test_only ? defaults.scrape_qa_limit : max_leads;
 
+  // When starting a full scrape, delete the QA sample leads first.
+  // QA leads are unenriched (no email, no DM, no validated website) — safe to remove.
+  if (!test_only) {
+    // Delete leads that have no enrichment at all (raw QA scrape data)
+    const { count: deleted, error: delErr } = await supabase
+      .from("leads")
+      .delete({ count: "exact" })
+      .eq("campaign_id", campaign_id)
+      .is("email", null)
+      .is("decision_maker_name", null)
+      .not("enrichment_status", "cs", '{"website_validated":true}');
+
+    if (delErr) {
+      console.error("Error deleting QA leads:", delErr.message);
+    } else {
+      console.log(`Deleted ${deleted} QA sample leads before full scrape`);
+    }
+  }
+
   const { data: job, error } = await supabase
     .from("bulk_jobs")
     .insert({
@@ -693,40 +714,61 @@ async function toolFindEmails(
     .single();
   if (campErr) return JSON.stringify({ error: "Campaign not found" });
 
-  // Count total and eligible leads
+  // Count total leads and validated (cleaned) leads
   const { count: totalLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id);
 
-  const { count: withEmail } = await supabase
+  // Only consider validated leads — must pass clean step first
+  const { count: validatedLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .contains("enrichment_status", { website_validated: true });
+
+  const { count: validatedWithEmail } = await supabase
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", campaign_id)
+    .contains("enrichment_status", { website_validated: true })
     .not("email", "is", null);
 
-  const { count: withoutEmail } = await supabase
+  const { count: validatedWithoutEmail } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .contains("enrichment_status", { website_validated: true })
     .is("email", null);
 
   const eligible = include_existing
-    ? Math.min(totalLeads || 0, max_leads)
-    : Math.min(withoutEmail || 0, max_leads);
+    ? Math.min(validatedLeads || 0, max_leads)
+    : Math.min(validatedWithoutEmail || 0, max_leads);
+
+  if ((validatedLeads || 0) === 0) {
+    return JSON.stringify({
+      mode: "PREVIEW",
+      campaign_name: campaign.name,
+      total_leads: totalLeads || 0,
+      validated_leads: 0,
+      will_process: 0,
+      message: `No validated leads found. Run "Clean & Validate" first to validate websites before finding emails.`,
+    });
+  }
 
   if (dry_run) {
     return JSON.stringify({
       mode: "PREVIEW",
       campaign_name: campaign.name,
       total_leads: totalLeads || 0,
-      already_have_email: withEmail || 0,
-      without_email: withoutEmail || 0,
+      validated_leads: validatedLeads || 0,
+      already_have_email: validatedWithEmail || 0,
+      without_email: validatedWithoutEmail || 0,
       will_process: eligible,
       include_existing,
       estimated_api_credits: eligible,
       max_leads_limit: max_leads,
-      message: `Preview: ${totalLeads || 0} total leads. ${withEmail || 0} already have emails, ${withoutEmail || 0} need emails. Will process ${eligible} leads at ~${eligible} API credits.`,
+      message: `Preview: ${validatedLeads || 0} validated leads (out of ${totalLeads || 0} total). ${validatedWithEmail || 0} already have emails, ${validatedWithoutEmail || 0} need emails. Will process ${eligible} leads at ~${eligible} API credits.`,
     });
   }
 
@@ -735,7 +777,7 @@ async function toolFindEmails(
     .insert({
       campaign_id,
       type: "find_emails",
-      config: { max_leads, include_existing, estimated_leads: eligible },
+      config: { max_leads, include_existing, estimated_leads: eligible, validated_only: true },
     })
     .select()
     .single();
@@ -745,7 +787,7 @@ async function toolFindEmails(
     job_id: job.id,
     type: "find_emails",
     eligible_leads: eligible,
-    message: `Find-emails job created for ${eligible} leads in campaign "${campaign.name}".`,
+    message: `Find-emails job created for ${eligible} validated leads in campaign "${campaign.name}".`,
   });
 }
 
@@ -769,40 +811,61 @@ async function toolFindDecisionMakers(
     .single();
   if (campErr) return JSON.stringify({ error: "Campaign not found" });
 
-  // Count total and eligible leads
+  // Count total leads and validated (cleaned) leads
   const { count: totalLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id);
 
-  const { count: withDM } = await supabase
+  // Only consider validated leads — must pass clean step first
+  const { count: validatedLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .contains("enrichment_status", { website_validated: true });
+
+  const { count: validatedWithDM } = await supabase
+    .from("leads")
+    .select("id", { count: "exact", head: true })
+    .eq("campaign_id", campaign_id)
+    .contains("enrichment_status", { website_validated: true })
     .not("decision_maker_name", "is", null);
 
-  const { count: withoutDM } = await supabase
+  const { count: validatedWithoutDM } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .contains("enrichment_status", { website_validated: true })
     .is("decision_maker_name", null);
 
   const eligible = include_existing
-    ? Math.min(totalLeads || 0, max_leads)
-    : Math.min(withoutDM || 0, max_leads);
+    ? Math.min(validatedLeads || 0, max_leads)
+    : Math.min(validatedWithoutDM || 0, max_leads);
+
+  if ((validatedLeads || 0) === 0) {
+    return JSON.stringify({
+      mode: "PREVIEW",
+      campaign_name: campaign.name,
+      total_leads: totalLeads || 0,
+      validated_leads: 0,
+      will_process: 0,
+      message: `No validated leads found. Run "Clean & Validate" first to validate websites before finding decision makers.`,
+    });
+  }
 
   if (dry_run) {
     return JSON.stringify({
       mode: "PREVIEW",
       campaign_name: campaign.name,
       total_leads: totalLeads || 0,
-      already_have_dm: withDM || 0,
-      without_dm: withoutDM || 0,
+      validated_leads: validatedLeads || 0,
+      already_have_dm: validatedWithDM || 0,
+      without_dm: validatedWithoutDM || 0,
       will_process: eligible,
       include_existing,
       estimated_cost: `~${eligible} OpenAI calls + DataForSEO lookups`,
       max_leads_limit: max_leads,
-      message: `Preview: ${totalLeads || 0} total leads. ${withDM || 0} already have decision makers, ${withoutDM || 0} need enrichment. Will process ${eligible} leads using OpenAI + DataForSEO.`,
+      message: `Preview: ${validatedLeads || 0} validated leads (out of ${totalLeads || 0} total). ${validatedWithDM || 0} already have DMs, ${validatedWithoutDM || 0} need enrichment. Will process ${eligible} leads using OpenAI + DataForSEO.`,
     });
   }
 
@@ -811,7 +874,7 @@ async function toolFindDecisionMakers(
     .insert({
       campaign_id,
       type: "find_decision_makers",
-      config: { max_leads, include_existing, estimated_leads: eligible },
+      config: { max_leads, include_existing, estimated_leads: eligible, validated_only: true },
     })
     .select()
     .single();
@@ -821,7 +884,7 @@ async function toolFindDecisionMakers(
     job_id: job.id,
     type: "find_decision_makers",
     eligible_leads: eligible,
-    message: `Find-decision-makers job created for ${eligible} leads in campaign "${campaign.name}".`,
+    message: `Find-decision-makers job created for ${eligible} validated leads in campaign "${campaign.name}".`,
   });
 }
 

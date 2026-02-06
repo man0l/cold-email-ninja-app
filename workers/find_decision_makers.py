@@ -32,6 +32,7 @@ class FindDecisionMakersWorker(SupabaseWorkerBase):
     def run(self):
         max_leads = self.config.get("max_leads", 100)
         include_existing = self.config.get("include_existing", False)
+        validated_only = self.config.get("validated_only", True)
 
         openai_key = self.get_api_key("openai")
         if not openai_key:
@@ -46,8 +47,17 @@ class FindDecisionMakersWorker(SupabaseWorkerBase):
         leads = self.get_leads(self.campaign_id, filters=filters, limit=max_leads)
         leads = [l for l in leads if l.get("company_website") or l.get("domain")]
 
+        # Only process leads that passed the clean/validate step
+        if validated_only:
+            leads = [
+                l for l in leads
+                if (l.get("enrichment_status") or {}).get("website_validated") is True
+            ]
+            logger.info(f"Validated-only filter: {len(leads)} leads with validated websites")
+
         if not leads:
-            self.complete({"processed": 0, "message": "No leads need decision maker enrichment"})
+            msg = "No validated leads found. Run clean & validate first." if validated_only else "No leads need decision maker enrichment"
+            self.complete({"processed": 0, "message": msg})
             return
 
         logger.info(f"Processing {len(leads)} leads for decision maker enrichment")

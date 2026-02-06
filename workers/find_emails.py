@@ -29,6 +29,7 @@ class FindEmailsWorker(SupabaseWorkerBase):
     def run(self):
         max_leads = self.config.get("max_leads", 100)
         include_existing = self.config.get("include_existing", False)
+        validated_only = self.config.get("validated_only", True)
 
         api_key = self.get_api_key("openwebninja")
         if not api_key:
@@ -44,8 +45,18 @@ class FindEmailsWorker(SupabaseWorkerBase):
 
         # Filter to leads with websites
         leads = [l for l in leads if l.get("company_website") or l.get("domain")]
+
+        # Only process leads that passed the clean/validate step
+        if validated_only:
+            leads = [
+                l for l in leads
+                if (l.get("enrichment_status") or {}).get("website_validated") is True
+            ]
+            logger.info(f"Validated-only filter: {len(leads)} leads with validated websites")
+
         if not leads:
-            self.complete({"processed": 0, "message": "No leads with websites found"})
+            msg = "No validated leads with websites found. Run clean & validate first." if validated_only else "No leads with websites found"
+            self.complete({"processed": 0, "message": msg})
             return
 
         logger.info(f"Processing {len(leads)} leads for email enrichment")
