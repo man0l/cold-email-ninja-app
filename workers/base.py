@@ -23,6 +23,7 @@ class SupabaseWorkerBase:
     def __init__(self, job_data: Dict[str, Any], supabase_client: Client):
         self.job_id = job_data["id"]
         self.campaign_id = job_data.get("campaign_id")
+        self.customer_id = job_data.get("customer_id")
         self.config = job_data.get("config", {})
         self.db = supabase_client
         self._total = 0
@@ -38,7 +39,7 @@ class SupabaseWorkerBase:
 
     def write_leads(self, campaign_id: str, leads_batch: List[Dict[str, Any]]):
         """Upsert a batch of leads into the ninja.leads table."""
-        rows = [{"campaign_id": campaign_id, **lead} for lead in leads_batch]
+        rows = [{"campaign_id": campaign_id, "customer_id": self.customer_id, **lead} for lead in leads_batch]
         self.db.from_("leads").upsert(
             rows,
             on_conflict="campaign_id,email"
@@ -46,7 +47,7 @@ class SupabaseWorkerBase:
 
     def write_leads_no_conflict(self, campaign_id: str, leads_batch: List[Dict[str, Any]]):
         """Insert leads without conflict resolution (for leads without email yet)."""
-        rows = [{"campaign_id": campaign_id, **lead} for lead in leads_batch]
+        rows = [{"campaign_id": campaign_id, "customer_id": self.customer_id, **lead} for lead in leads_batch]
         self.db.from_("leads").insert(rows).execute()
 
     def update_lead(self, lead_id: str, updates: Dict[str, Any]):
@@ -55,10 +56,13 @@ class SupabaseWorkerBase:
 
     def get_leads(self, campaign_id: str, filters: Optional[Dict] = None,
                   limit: int = 1000) -> List[Dict]:
-        """Fetch leads for processing."""
+        """Fetch leads for processing (scoped to customer_id from the job)."""
         query = self.db.from_("leads").select("*").eq(
             "campaign_id", campaign_id
-        ).limit(limit)
+        )
+        if self.customer_id:
+            query = query.eq("customer_id", self.customer_id)
+        query = query.limit(limit)
 
         if filters:
             for key, value in filters.items():
@@ -71,11 +75,14 @@ class SupabaseWorkerBase:
         return result.data or []
 
     def get_api_key(self, service: str) -> Optional[str]:
-        """Get API key from ninja.api_keys table, fallback to env var."""
+        """Get API key from ninja.api_keys table (scoped to customer), fallback to env var."""
         try:
-            result = self.db.from_("api_keys").select("api_key").eq(
+            query = self.db.from_("api_keys").select("api_key").eq(
                 "service", service
-            ).single().execute()
+            )
+            if self.customer_id:
+                query = query.eq("customer_id", self.customer_id)
+            result = query.single().execute()
             if result.data:
                 return result.data["api_key"]
         except Exception:

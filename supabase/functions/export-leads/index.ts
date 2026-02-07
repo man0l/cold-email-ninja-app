@@ -4,7 +4,7 @@
  * Directives: convert_to_apollo.md, export_to_sheets.md
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors, corsHeaders } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors, corsHeaders } from "../_shared/supabase.ts";
 
 const APOLLO_COLUMNS = [
   "first_name", "last_name", "full_name", "email", "personal_email",
@@ -31,16 +31,18 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const { campaign_id, format = "csv", filters = {} } = await req.json();
     if (!campaign_id) return errorResponse("campaign_id required");
 
-    // Fetch leads
+    // Fetch leads (scoped to customer)
     let query = supabase
       .from("leads")
       .select("*")
       .eq("campaign_id", campaign_id)
+      .eq("customer_id", customerId)
       .order("created_at", { ascending: true });
 
     if (filters.ice_status) query = query.eq("ice_status", filters.ice_status);

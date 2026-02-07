@@ -6,6 +6,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
   getSupabaseClient,
+  getUserId,
   jsonResponse,
   errorResponse,
   handleCors,
@@ -85,13 +86,15 @@ Deno.serve(async (req: Request) => {
   if (corsResp) return corsResp;
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
-    // Fetch OpenAI API key from DB
+    // Fetch OpenAI API key from DB (scoped to customer)
     const { data: keyRow } = await supabase
       .from("api_keys")
       .select("api_key")
       .eq("service", "openai")
+      .eq("customer_id", customerId)
       .single();
 
     if (!keyRow?.api_key) {

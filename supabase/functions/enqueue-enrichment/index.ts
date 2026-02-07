@@ -4,7 +4,7 @@
  * Uses ninja.enqueue_lead_enrichment RPC
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 
 Deno.serve(async (req: Request) => {
   const corsResp = handleCors(req);
@@ -15,6 +15,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const { campaign_id, lead_ids, all = false } = await req.json();
@@ -28,6 +29,7 @@ Deno.serve(async (req: Request) => {
         .from("leads")
         .select("id")
         .eq("campaign_id", campaign_id)
+        .eq("customer_id", customerId)
         .eq("ice_status", "pending");
 
       if (error) return errorResponse(error.message);
@@ -51,6 +53,7 @@ Deno.serve(async (req: Request) => {
       .from("leads")
       .update({ ice_status: "queued" })
       .in("id", targetLeadIds)
+      .eq("customer_id", customerId)
       .eq("ice_status", "pending");
 
     return jsonResponse({

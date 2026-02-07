@@ -40,7 +40,10 @@ class FindEmailsWorker(SupabaseWorkerBase):
         # Build query directly to apply all filters at the DB level (including JSONB)
         query = self.db.from_("leads").select("*").eq(
             "campaign_id", self.campaign_id
-        ).limit(max_leads)
+        )
+        if self.customer_id:
+            query = query.eq("customer_id", self.customer_id)
+        query = query.limit(max_leads)
 
         if not include_existing:
             query = query.is_("email", "null")

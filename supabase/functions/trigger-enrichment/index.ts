@@ -5,7 +5,7 @@
  * Directives: find_emails.md, find_decision_makers.md, anymail_find_emails.md
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 
 const VALID_TYPES = [
   "find_emails",          // OpenWeb Ninja -> emails, phones, socials
@@ -22,6 +22,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const {
@@ -37,11 +38,12 @@ Deno.serve(async (req: Request) => {
       return errorResponse(`type must be one of: ${VALID_TYPES.join(", ")}`);
     }
 
-    // Verify campaign exists
+    // Verify campaign exists and belongs to this customer
     const { data: campaign, error: campErr } = await supabase
       .from("campaigns")
       .select("id")
       .eq("id", campaign_id)
+      .eq("customer_id", customerId)
       .single();
     if (campErr || !campaign) return errorResponse("Campaign not found", 404);
 
@@ -49,7 +51,8 @@ Deno.serve(async (req: Request) => {
     let countQuery = supabase
       .from("leads")
       .select("id", { count: "exact" })
-      .eq("campaign_id", campaign_id);
+      .eq("campaign_id", campaign_id)
+      .eq("customer_id", customerId);
 
     // Filter based on enrichment type
     if (type === "find_emails" && !include_existing) {
@@ -68,6 +71,7 @@ Deno.serve(async (req: Request) => {
       .from("bulk_jobs")
       .insert({
         campaign_id,
+        customer_id: customerId,
         type,
         config: {
           max_leads,

@@ -7,7 +7,7 @@
  * Batches names (25 per OpenAI call) and writes DB updates 25-concurrent.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 
 // Same prompt as execution/casualise_company_name.py → openai_casualise_name()
 const SYSTEM_PROMPT =
@@ -52,25 +52,28 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const { campaign_id, lead_ids } = await req.json();
     if (!campaign_id) return errorResponse("campaign_id required");
 
-    // Get OpenAI key
+    // Get OpenAI key for this customer
     const { data: keyRow } = await supabase
       .from("api_keys")
       .select("api_key")
       .eq("service", "openai")
+      .eq("customer_id", customerId)
       .single();
 
     if (!keyRow) return errorResponse("OpenAI API key not configured");
 
-    // Fetch leads needing casualisation
+    // Fetch leads needing casualisation (scoped to customer)
     let query = supabase
       .from("leads")
       .select("id, company_name, company_name_casual")
       .eq("campaign_id", campaign_id)
+      .eq("customer_id", customerId)
       .not("company_name", "is", null)
       .is("company_name_casual", null);
 

@@ -4,7 +4,7 @@
  * Directive: fix_location_columns.md
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 
 // US state abbreviation mapping
 const STATE_MAP: Record<string, string> = {
@@ -49,6 +49,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const { campaign_id, lead_ids } = await req.json();
@@ -57,7 +58,8 @@ Deno.serve(async (req: Request) => {
     let query = supabase
       .from("leads")
       .select("id, city, state, zip, country, address, raw")
-      .eq("campaign_id", campaign_id);
+      .eq("campaign_id", campaign_id)
+      .eq("customer_id", customerId);
 
     if (lead_ids?.length) query = query.in("id", lead_ids);
 

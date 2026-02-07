@@ -3,13 +3,14 @@
  * Bulk query, update, and delete leads
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 
 Deno.serve(async (req: Request) => {
   const corsResp = handleCors(req);
   if (corsResp) return corsResp;
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
   const url = new URL(req.url);
 
   try {
@@ -21,6 +22,7 @@ Deno.serve(async (req: Request) => {
           .from("leads")
           .select("*")
           .eq("id", id)
+          .eq("customer_id", customerId)
           .single();
         if (error) return errorResponse(error.message, 404);
         return jsonResponse(data);
@@ -35,6 +37,7 @@ Deno.serve(async (req: Request) => {
       let query = supabase
         .from("leads")
         .select("*", { count: "exact" })
+        .eq("customer_id", customerId)
         .order("created_at", { ascending: false })
         .range(offset, offset + limit - 1);
 
@@ -62,6 +65,7 @@ Deno.serve(async (req: Request) => {
         .from("leads")
         .update({ ...updates, updated_at: new Date().toISOString() })
         .in("id", ids)
+        .eq("customer_id", customerId)
         .select();
 
       if (error) return errorResponse(error.message);
@@ -73,7 +77,7 @@ Deno.serve(async (req: Request) => {
       const { ids } = await req.json();
       if (!ids?.length) return errorResponse("Required: ids (array)");
 
-      const { error } = await supabase.from("leads").delete().in("id", ids);
+      const { error } = await supabase.from("leads").delete().in("id", ids).eq("customer_id", customerId);
       if (error) return errorResponse(error.message);
       return jsonResponse({ deleted: ids.length });
     }

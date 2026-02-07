@@ -466,9 +466,11 @@ export function useSaveApiKey() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (params: { service: string; api_key: string }) => {
+      // customer_id is set by DEFAULT auth.uid() on insert;
+      // upsert on (customer_id, service) ensures one key per service per user
       const { data, error } = await supabase
         .from("api_keys")
-        .upsert(params, { onConflict: "service" })
+        .upsert(params, { onConflict: "customer_id,service" })
         .select()
         .single();
       if (error) throw error;
@@ -527,10 +529,11 @@ export function useAgentConfig() {
   return useQuery({
     queryKey: ["agent_config"],
     queryFn: async () => {
+      // RLS ensures we only see our own row; .single() works because
+      // there's a UNIQUE(customer_id) constraint — one settings row per user.
       const { data, error } = await supabase
         .from("app_settings")
         .select("settings")
-        .eq("id", 1)
         .single();
       if (error) throw error;
       return (data?.settings as { agent?: AgentConfig })?.agent ?? null;
@@ -542,11 +545,10 @@ export function useSaveAgentConfig() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (agentConfig: Partial<AgentConfig>) => {
-      // Read current settings first to merge
+      // Read current settings first to merge (RLS scopes to our row)
       const { data: current } = await supabase
         .from("app_settings")
-        .select("settings")
-        .eq("id", 1)
+        .select("id, settings")
         .single();
 
       const existingSettings = (current?.settings as Record<string, unknown>) || {};
@@ -557,13 +559,26 @@ export function useSaveAgentConfig() {
         agent: { ...existingAgent, ...agentConfig },
       };
 
-      const { data, error } = await supabase
-        .from("app_settings")
-        .upsert({ id: 1, settings: merged }, { onConflict: "id" })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
+      if (current?.id) {
+        // Update existing row
+        const { data, error } = await supabase
+          .from("app_settings")
+          .update({ settings: merged })
+          .eq("id", current.id)
+          .select()
+          .single();
+        if (error) throw error;
+        return data;
+      } else {
+        // No settings row yet — insert (customer_id set by DEFAULT auth.uid())
+        const { data, error } = await supabase
+          .from("app_settings")
+          .insert({ settings: merged })
+          .select()
+          .single();
+        if (error) throw error;
+        return data;
+      }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agent_config"] }),
   });

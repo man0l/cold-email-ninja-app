@@ -4,13 +4,14 @@
  * Directive: create_campaign.md
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 
 Deno.serve(async (req: Request) => {
   const corsResp = handleCors(req);
   if (corsResp) return corsResp;
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
   const url = new URL(req.url);
   const id = url.searchParams.get("id");
 
@@ -22,6 +23,7 @@ Deno.serve(async (req: Request) => {
           .from("campaigns")
           .select("*, leads:leads(count)")
           .eq("id", id)
+          .eq("customer_id", customerId)
           .single();
         if (error) return errorResponse(error.message, 404);
         return jsonResponse(data);
@@ -31,6 +33,7 @@ Deno.serve(async (req: Request) => {
       let query = supabase
         .from("campaigns")
         .select("*, leads:leads(count)")
+        .eq("customer_id", customerId)
         .order("created_at", { ascending: false });
 
       if (status) query = query.eq("status", status);
@@ -58,6 +61,7 @@ Deno.serve(async (req: Request) => {
           service_line,
           summarize_prompt,
           icebreaker_prompt,
+          customer_id: customerId,
           status: body.status || "draft",
         })
         .select()
@@ -76,6 +80,7 @@ Deno.serve(async (req: Request) => {
         .from("campaigns")
         .update({ ...body, updated_at: new Date().toISOString() })
         .eq("id", id)
+        .eq("customer_id", customerId)
         .select()
         .single();
 
@@ -90,7 +95,8 @@ Deno.serve(async (req: Request) => {
       const { error } = await supabase
         .from("campaigns")
         .delete()
-        .eq("id", id);
+        .eq("id", id)
+        .eq("customer_id", customerId);
 
       if (error) return errorResponse(error.message);
       return jsonResponse({ deleted: true });

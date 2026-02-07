@@ -5,7 +5,7 @@
  * Directive: export_to_sheets.md (reverse), create_campaign.md
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 import { parseCSV, mapRow } from "../_shared/csv.ts";
 
 Deno.serve(async (req: Request) => {
@@ -17,6 +17,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const formData = await req.formData();
@@ -27,11 +28,12 @@ Deno.serve(async (req: Request) => {
     if (!campaignId) return errorResponse("campaign_id required");
     if (!file) return errorResponse("file required (CSV)");
 
-    // Verify campaign exists
+    // Verify campaign exists and belongs to this customer
     const { data: campaign, error: campErr } = await supabase
       .from("campaigns")
       .select("id")
       .eq("id", campaignId)
+      .eq("customer_id", customerId)
       .single();
     if (campErr || !campaign) return errorResponse("Campaign not found", 404);
 
@@ -46,6 +48,7 @@ Deno.serve(async (req: Request) => {
       const mapped = mapRow(row);
       return {
         campaign_id: campaignId,
+        customer_id: customerId,
         ...mapped,
         source,
         raw: row, // preserve original data

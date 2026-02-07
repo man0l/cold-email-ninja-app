@@ -5,7 +5,7 @@
  * Supports: keyword removal only or OpenAI rewrite
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 
 // Top spam trigger keywords (subset - full list has 400+)
 const SPAM_KEYWORDS = [
@@ -52,16 +52,18 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const { campaign_id, lead_ids, use_openai = false } = await req.json();
     if (!campaign_id) return errorResponse("campaign_id required");
 
-    // Fetch leads with ice_breaker content
+    // Fetch leads with ice_breaker content (scoped to customer)
     let query = supabase
       .from("leads")
       .select("id, ice_breaker")
       .eq("campaign_id", campaign_id)
+      .eq("customer_id", customerId)
       .not("ice_breaker", "is", null)
       .is("ice_breaker_cleaned", null);
 
@@ -91,11 +93,12 @@ Deno.serve(async (req: Request) => {
       spamFound++;
 
       if (use_openai) {
-        // Get OpenAI key
+        // Get OpenAI key for this customer
         const { data: keyRow } = await supabase
           .from("api_keys")
           .select("api_key")
           .eq("service", "openai")
+          .eq("customer_id", customerId)
           .single();
 
         if (keyRow) {

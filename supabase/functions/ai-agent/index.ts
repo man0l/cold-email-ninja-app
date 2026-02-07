@@ -18,6 +18,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {
   getSupabaseClient,
+  getUserId,
   jsonResponse,
   errorResponse,
   handleCors,
@@ -157,12 +158,12 @@ const DEFAULT_CONFIG: AgentConfig = {
 // deno-lint-ignore no-explicit-any
 type SupabaseClient = any;
 
-async function loadAgentConfig(supabase: SupabaseClient): Promise<AgentConfig> {
+async function loadAgentConfig(supabase: SupabaseClient, customerId: string): Promise<AgentConfig> {
   try {
     const { data, error } = await supabase
       .from("app_settings")
       .select("settings")
-      .eq("id", 1)
+      .eq("customer_id", customerId)
       .single();
 
     if (error || !data?.settings?.agent) {
@@ -412,28 +413,29 @@ async function handleToolCall(
   args: Record<string, any>,
   supabase: SupabaseClient,
   defaults: AgentDefaults,
+  customerId: string,
 ): Promise<string> {
   switch (toolName) {
     case "create_campaign":
-      return await toolCreateCampaign(supabase, args);
+      return await toolCreateCampaign(supabase, args, customerId);
     case "list_campaigns":
-      return await toolListCampaigns(supabase);
+      return await toolListCampaigns(supabase, customerId);
     case "get_campaign_stats":
-      return await toolGetCampaignStats(supabase, args.campaign_id);
+      return await toolGetCampaignStats(supabase, args.campaign_id, customerId);
     case "scrape_google_maps":
-      return await toolScrapeGoogleMaps(supabase, args, defaults);
+      return await toolScrapeGoogleMaps(supabase, args, defaults, customerId);
     case "clean_and_validate":
-      return await toolCleanAndValidate(supabase, args, defaults);
+      return await toolCleanAndValidate(supabase, args, defaults, customerId);
     case "find_emails":
-      return await toolFindEmails(supabase, args, defaults);
+      return await toolFindEmails(supabase, args, defaults, customerId);
     case "find_decision_makers":
-      return await toolFindDecisionMakers(supabase, args, defaults);
+      return await toolFindDecisionMakers(supabase, args, defaults, customerId);
     case "casualise_names":
-      return await toolCasualiseNames(supabase, args.campaign_id, defaults);
+      return await toolCasualiseNames(supabase, args.campaign_id, defaults, customerId);
     case "get_sample_leads":
-      return await toolGetSampleLeads(supabase, args.campaign_id, args.limit, defaults);
+      return await toolGetSampleLeads(supabase, args.campaign_id, args.limit, defaults, customerId);
     case "get_active_jobs":
-      return await toolGetActiveJobs(supabase, args.campaign_id, defaults);
+      return await toolGetActiveJobs(supabase, args.campaign_id, defaults, customerId);
     default:
       return JSON.stringify({ error: `Unknown tool: ${toolName}` });
   }
@@ -443,6 +445,7 @@ async function handleToolCall(
 async function toolCreateCampaign(
   supabase: SupabaseClient,
   args: Record<string, any>,
+  customerId: string,
 ): Promise<string> {
   const { name, service_line } = args;
 
@@ -460,6 +463,7 @@ async function toolCreateCampaign(
       icebreaker_prompt:
         "Write a casual, friendly icebreaker line mentioning something specific about the company.",
       status: "active",
+      customer_id: customerId,
     })
     .select()
     .single();
@@ -474,12 +478,13 @@ async function toolCreateCampaign(
   });
 }
 
-async function toolListCampaigns(supabase: SupabaseClient): Promise<string> {
+async function toolListCampaigns(supabase: SupabaseClient, customerId: string): Promise<string> {
   // Use join-based count instead of N+1 queries for scalability
   // Explicit FK hint avoids PostgREST ambiguity when multiple relations exist
   const { data: campaigns, error } = await supabase
     .from("campaigns")
     .select("id, name, service_line, status, created_at, leads:leads!campaign_id(count)")
+    .eq("customer_id", customerId)
     .order("created_at", { ascending: false });
   if (error) return JSON.stringify({ error: error.message });
 
@@ -499,12 +504,14 @@ async function toolListCampaigns(supabase: SupabaseClient): Promise<string> {
 async function toolGetCampaignStats(
   supabase: SupabaseClient,
   campaignId: string,
+  customerId: string,
 ): Promise<string> {
   const base = () =>
     supabase
       .from("leads")
       .select("id", { count: "exact", head: true })
-      .eq("campaign_id", campaignId);
+      .eq("campaign_id", campaignId)
+      .eq("customer_id", customerId);
 
   const [totalRes, emailRes, websiteRes, dmRes, casualRes, icebreakerRes] =
     await Promise.all([
@@ -520,6 +527,7 @@ async function toolGetCampaignStats(
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaignId)
+    .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true });
 
   const total = totalRes.count || 0;
@@ -539,6 +547,7 @@ async function toolScrapeGoogleMaps(
   supabase: SupabaseClient,
   args: Record<string, any>,
   defaults: AgentDefaults,
+  customerId: string,
 ): Promise<string> {
   const {
     campaign_id,
@@ -547,11 +556,12 @@ async function toolScrapeGoogleMaps(
     test_only = true,
   } = args;
 
-  // Verify campaign
+  // Verify campaign belongs to this customer
   const { data: campaign, error: campErr } = await supabase
     .from("campaigns")
     .select("id, name")
     .eq("id", campaign_id)
+    .eq("customer_id", customerId)
     .single();
   if (campErr) return JSON.stringify({ error: "Campaign not found" });
 
@@ -565,6 +575,7 @@ async function toolScrapeGoogleMaps(
       .from("leads")
       .delete({ count: "exact" })
       .eq("campaign_id", campaign_id)
+      .eq("customer_id", customerId)
       .is("email", null)
       .is("decision_maker_name", null)
       .not("enrichment_status", "cs", '{"website_validated":true}');
@@ -580,6 +591,7 @@ async function toolScrapeGoogleMaps(
     .from("bulk_jobs")
     .insert({
       campaign_id,
+      customer_id: customerId,
       type: "scrape_maps",
       config: {
         keywords,
@@ -624,6 +636,7 @@ async function toolCleanAndValidate(
   supabase: SupabaseClient,
   args: Record<string, any>,
   defaults: AgentDefaults,
+  customerId: string,
 ): Promise<string> {
   const {
     campaign_id,
@@ -636,6 +649,7 @@ async function toolCleanAndValidate(
     .from("campaigns")
     .select("id, name")
     .eq("id", campaign_id)
+    .eq("customer_id", customerId)
     .single();
   if (campErr) return JSON.stringify({ error: "Campaign not found" });
 
@@ -643,18 +657,21 @@ async function toolCleanAndValidate(
   const { count: totalLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
-    .eq("campaign_id", campaign_id);
+    .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId);
 
   const { count: withWebsite } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId)
     .not("company_website", "is", null);
 
   const { count: alreadyValidated } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true });
 
   if (dry_run) {
@@ -674,6 +691,7 @@ async function toolCleanAndValidate(
     .from("bulk_jobs")
     .insert({
       campaign_id,
+      customer_id: customerId,
       type: "clean_leads",
       config: {
         categories,
@@ -699,6 +717,7 @@ async function toolFindEmails(
   supabase: SupabaseClient,
   args: Record<string, any>,
   defaults: AgentDefaults,
+  customerId: string,
 ): Promise<string> {
   const {
     campaign_id,
@@ -711,6 +730,7 @@ async function toolFindEmails(
     .from("campaigns")
     .select("id, name")
     .eq("id", campaign_id)
+    .eq("customer_id", customerId)
     .single();
   if (campErr) return JSON.stringify({ error: "Campaign not found" });
 
@@ -718,19 +738,22 @@ async function toolFindEmails(
   const { count: totalLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
-    .eq("campaign_id", campaign_id);
+    .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId);
 
   // Only consider validated leads — must pass clean step first
   const { count: validatedLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true });
 
   const { count: validatedWithEmail } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true })
     .not("email", "is", null);
 
@@ -738,6 +761,7 @@ async function toolFindEmails(
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true })
     .is("email", null);
 
@@ -776,6 +800,7 @@ async function toolFindEmails(
     .from("bulk_jobs")
     .insert({
       campaign_id,
+      customer_id: customerId,
       type: "find_emails",
       config: { max_leads, include_existing, estimated_leads: eligible, validated_only: true },
     })
@@ -796,6 +821,7 @@ async function toolFindDecisionMakers(
   supabase: SupabaseClient,
   args: Record<string, any>,
   defaults: AgentDefaults,
+  customerId: string,
 ): Promise<string> {
   const {
     campaign_id,
@@ -808,6 +834,7 @@ async function toolFindDecisionMakers(
     .from("campaigns")
     .select("id, name")
     .eq("id", campaign_id)
+    .eq("customer_id", customerId)
     .single();
   if (campErr) return JSON.stringify({ error: "Campaign not found" });
 
@@ -815,19 +842,22 @@ async function toolFindDecisionMakers(
   const { count: totalLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
-    .eq("campaign_id", campaign_id);
+    .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId);
 
   // Only consider validated leads — must pass clean step first
   const { count: validatedLeads } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true });
 
   const { count: validatedWithDM } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true })
     .not("decision_maker_name", "is", null);
 
@@ -835,6 +865,7 @@ async function toolFindDecisionMakers(
     .from("leads")
     .select("id", { count: "exact", head: true })
     .eq("campaign_id", campaign_id)
+    .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true })
     .is("decision_maker_name", null);
 
@@ -873,6 +904,7 @@ async function toolFindDecisionMakers(
     .from("bulk_jobs")
     .insert({
       campaign_id,
+      customer_id: customerId,
       type: "find_decision_makers",
       config: { max_leads, include_existing, estimated_leads: eligible, validated_only: true },
     })
@@ -892,6 +924,7 @@ async function toolCasualiseNames(
   supabase: SupabaseClient,
   campaignId: string,
   defaults: AgentDefaults,
+  customerId: string,
 ): Promise<string> {
   // Same prompt as execution/casualise_company_name.py → openai_casualise_name()
   const CASUALISE_SYSTEM =
@@ -926,11 +959,12 @@ async function toolCasualiseNames(
   const OPENAI_BATCH = 25;
   const DB_CONCURRENCY = 25;
 
-  // Get OpenAI key
+  // Get OpenAI key for this customer
   const { data: keyRow } = await supabase
     .from("api_keys")
     .select("api_key")
     .eq("service", "openai")
+    .eq("customer_id", customerId)
     .single();
 
   if (!keyRow?.api_key) {
@@ -941,6 +975,7 @@ async function toolCasualiseNames(
     .from("leads")
     .select("id, company_name")
     .eq("campaign_id", campaignId)
+    .eq("customer_id", customerId)
     .not("company_name", "is", null)
     .is("company_name_casual", null)
     .limit(defaults.casualise_batch_size);
@@ -1029,19 +1064,21 @@ async function toolGetSampleLeads(
   campaignId: string,
   limit: number | undefined,
   defaults: AgentDefaults,
+  customerId: string,
 ): Promise<string> {
   const sampleSize = Math.min(
     limit || defaults.sample_leads_default,
     defaults.sample_leads_max,
   );
 
-  // Fetch sample leads for display
+  // Fetch sample leads for display (scoped to customer)
   const { data: leads, error } = await supabase
     .from("leads")
     .select(
       "company_name, company_website, category, city, state, phone, email, rating, reviews",
     )
     .eq("campaign_id", campaignId)
+    .eq("customer_id", customerId)
     .order("created_at", { ascending: false })
     .limit(sampleSize);
 
@@ -1059,6 +1096,7 @@ async function toolGetSampleLeads(
     .from("leads")
     .select("category")
     .eq("campaign_id", campaignId)
+    .eq("customer_id", customerId)
     .not("category", "is", null);
 
   const categoryBreakdown: Record<string, number> = {};
@@ -1080,7 +1118,8 @@ async function toolGetSampleLeads(
   const { count: totalCount } = await supabase
     .from("leads")
     .select("id", { count: "exact", head: true })
-    .eq("campaign_id", campaignId);
+    .eq("campaign_id", campaignId)
+    .eq("customer_id", customerId);
 
   return JSON.stringify({
     total_leads_in_campaign: totalCount || 0,
@@ -1105,10 +1144,12 @@ async function toolGetActiveJobs(
   supabase: SupabaseClient,
   campaignId: string | undefined,
   defaults: AgentDefaults,
+  customerId: string,
 ): Promise<string> {
   let query = supabase
     .from("bulk_jobs")
     .select("id, campaign_id, type, status, progress, created_at, error")
+    .eq("customer_id", customerId)
     .order("created_at", { ascending: false })
     .limit(defaults.active_jobs_limit);
 
@@ -1241,6 +1282,7 @@ async function runResponsesLoop(
   incomingMessages: ChatMessage[],
   config: AgentConfig,
   supabase: SupabaseClient,
+  customerId: string,
 ): Promise<{
   messages: ChatMessage[];
   toolLog: { name: string; args: Record<string, unknown>; result: string }[];
@@ -1285,7 +1327,7 @@ async function runResponsesLoop(
         fnArgs = {};
       }
 
-      const result = await handleToolCall(fc.name, fnArgs, supabase, config.defaults);
+      const result = await handleToolCall(fc.name, fnArgs, supabase, config.defaults, customerId);
       toolLog.push({ name: fc.name, args: fnArgs, result });
 
       toolResults.push({
@@ -1357,6 +1399,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const { messages: incomingMessages } = await req.json();
@@ -1366,13 +1409,14 @@ Deno.serve(async (req: Request) => {
     }
 
     // Load agent config from app_settings (or use defaults)
-    const config = await loadAgentConfig(supabase);
+    const config = await loadAgentConfig(supabase, customerId);
 
-    // Fetch OpenAI API key
+    // Fetch OpenAI API key (scoped to customer)
     const { data: keyRow } = await supabase
       .from("api_keys")
       .select("api_key")
       .eq("service", "openai")
+      .eq("customer_id", customerId)
       .single();
 
     if (!keyRow?.api_key) {
@@ -1390,6 +1434,7 @@ Deno.serve(async (req: Request) => {
         incomingMessages,
         config,
         supabase,
+        customerId,
       );
 
       return jsonResponse({
@@ -1446,6 +1491,7 @@ Deno.serve(async (req: Request) => {
           fnArgs,
           supabase,
           config.defaults,
+          customerId,
         );
 
         toolLog.push({ name: fnName, args: fnArgs, result });

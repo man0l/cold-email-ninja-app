@@ -4,7 +4,7 @@
  * Directive: convert_to_apollo.md
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { getSupabaseClient, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
+import { getSupabaseClient, getUserId, jsonResponse, errorResponse, handleCors } from "../_shared/supabase.ts";
 
 Deno.serve(async (req: Request) => {
   const corsResp = handleCors(req);
@@ -15,6 +15,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseClient(req);
+  const customerId = getUserId(req);
 
   try {
     const { campaign_id, lead_ids } = await req.json();
@@ -23,7 +24,8 @@ Deno.serve(async (req: Request) => {
     let query = supabase
       .from("leads")
       .select("*")
-      .eq("campaign_id", campaign_id);
+      .eq("campaign_id", campaign_id)
+      .eq("customer_id", customerId);
 
     if (lead_ids?.length) query = query.in("id", lead_ids);
 
