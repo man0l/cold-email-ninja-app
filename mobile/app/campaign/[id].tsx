@@ -5,6 +5,7 @@
  * Debounced search to avoid query spam.
  */
 import { View, Text, Pressable, RefreshControl, ActivityIndicator, Modal, Switch, Alert, Platform } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState, useMemo, useCallback } from "react";
 import { FlashList } from "@shopify/flash-list";
@@ -296,13 +297,18 @@ export default function CampaignDetailScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setShareModalVisible(false)}
       >
-        <View className="flex-1 bg-background p-4">
+        <SafeAreaView className="flex-1 bg-background" edges={["top"]}>
+          <View className="flex-1 p-4">
           {/* Modal header */}
           <View className="flex-row items-center justify-between mb-6">
             <Text className="text-lg font-bold text-foreground">
               Share Leads
             </Text>
-            <Pressable onPress={() => setShareModalVisible(false)}>
+            <Pressable
+              onPress={() => setShareModalVisible(false)}
+              hitSlop={16}
+              style={{ padding: 8 }}
+            >
               <Ionicons name="close" size={24} color="#94a3b8" />
             </Pressable>
           </View>
@@ -388,7 +394,8 @@ export default function CampaignDetailScreen() {
               </View>
             ))
           )}
-        </View>
+          </View>
+        </SafeAreaView>
       </Modal>
     </View>
   );
