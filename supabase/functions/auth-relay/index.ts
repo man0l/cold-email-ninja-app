@@ -65,7 +65,11 @@ Deno.serve((req: Request) => {
       }
 
       if (hash) {
-        window.location.href = redirect + hash;
+        // Convert fragment params to query params because Android deep links
+        // drop URL fragments. GoTrue sends tokens as #access_token=...
+        var tokenParams = hash.substring(1); // remove leading #
+        var separator = redirect.indexOf('?') >= 0 ? '&' : '?';
+        window.location.href = redirect + separator + tokenParams;
       } else {
         document.querySelector('p').textContent = 'Authentication failed. Please try again in the app.';
       }

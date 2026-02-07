@@ -98,14 +98,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await WebBrowser.openAuthSessionAsync(data.url, appDeepLink);
 
     if (result.type === "success") {
-      /* Extract tokens from the redirect URL fragment */
+      // Tokens may arrive as query params (relay converts fragments to params)
+      // or as hash fragments. Try both.
       const url = new URL(result.url);
-      const params = new URLSearchParams(
-        url.hash ? url.hash.substring(1) : url.search.substring(1)
-      );
+      const queryParams = new URLSearchParams(url.search);
+      const hashParams = url.hash
+        ? new URLSearchParams(url.hash.substring(1))
+        : new URLSearchParams();
 
-      const accessToken = params.get("access_token");
-      const refreshToken = params.get("refresh_token");
+      const accessToken =
+        queryParams.get("access_token") || hashParams.get("access_token");
+      const refreshToken =
+        queryParams.get("refresh_token") || hashParams.get("refresh_token");
 
       if (accessToken && refreshToken) {
         await supabase.auth.setSession({
@@ -113,6 +117,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           refresh_token: refreshToken,
         });
       }
+      // If tokens aren't here, the auth/callback route will handle them
+      // via the deep link params (Expo Router).
     }
   }, []);
 
