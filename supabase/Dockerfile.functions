@@ -1,0 +1,4 @@
+FROM supabase/edge-runtime:v1.69.6
+
+# Copy all Edge Functions into the image
+COPY functions/ /home/deno/functions/
