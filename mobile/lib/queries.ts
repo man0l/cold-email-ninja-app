@@ -480,6 +480,69 @@ export function useSaveApiKey() {
   });
 }
 
+// ==================== LEAD SHARES ====================
+
+export interface LeadShare {
+  id: string;
+  customer_id: string;
+  campaign_id: string;
+  token: string;
+  name: string | null;
+  is_public: boolean;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export function useShares(campaignId: string) {
+  return useQuery({
+    queryKey: ["shares", campaignId],
+    queryFn: async () => {
+      // Query via Supabase client — RLS ensures we only see our own shares
+      const { data: shares, error } = await supabase
+        .from("lead_shares")
+        .select("*")
+        .eq("campaign_id", campaignId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (shares || []) as LeadShare[];
+    },
+    enabled: !!campaignId,
+  });
+}
+
+export function useCreateShare() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: {
+      campaign_id: string;
+      name?: string;
+      is_public?: boolean;
+    }) => invokeFunction<LeadShare>("manage-shares", params),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["shares", vars.campaign_id] });
+    },
+  });
+}
+
+export function useDeleteShare() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: { share_id: string; campaign_id: string }) => {
+      // Edge Function expects DELETE method, but invoke always POSTs.
+      // We'll pass _method hint and handle in the function, or call directly.
+      // Simplest: delete via Supabase client (RLS enforces ownership)
+      const { error } = await supabase
+        .from("lead_shares")
+        .delete()
+        .eq("id", params.share_id);
+      if (error) throw error;
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["shares", vars.campaign_id] });
+    },
+  });
+}
+
 // ==================== STATS ====================
 
 export function useDashboardStats() {

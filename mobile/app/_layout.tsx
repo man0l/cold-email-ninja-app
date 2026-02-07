@@ -1,5 +1,5 @@
 import "../global.css";
-import { Stack } from "expo-router";
+import { Stack, useSegments } from "expo-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -18,8 +18,12 @@ const queryClient = new QueryClient({
 
 function RootNavigator() {
   const { session, loading } = useAuth();
+  const segments = useSegments();
 
-  if (loading) {
+  // Allow /share routes without auth — they handle their own access control
+  const isShareRoute = segments[0] === "share";
+
+  if (loading && !isShareRoute) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0f172a" }}>
         <ActivityIndicator size="large" color="#3b82f6" />
@@ -27,8 +31,8 @@ function RootNavigator() {
     );
   }
 
-  // No session → show login directly (bypass router)
-  if (!session) {
+  // No session → show login directly (bypass router), unless on share route
+  if (!session && !isShareRoute) {
     return <LoginScreen />;
   }
 
@@ -57,6 +61,10 @@ function RootNavigator() {
       <Stack.Screen
         name="enrich/[campaignId]"
         options={{ title: "Enrichment Pipeline", headerShown: false }}
+      />
+      <Stack.Screen
+        name="share/[token]"
+        options={{ title: "Shared Leads", headerShown: false }}
       />
     </Stack>
   );

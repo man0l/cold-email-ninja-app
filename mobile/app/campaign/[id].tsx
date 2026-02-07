@@ -4,11 +4,12 @@
  * Lean field selection (~10 fields instead of 40+).
  * Debounced search to avoid query spam.
  */
-import { View, Text, Pressable, RefreshControl, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, RefreshControl, ActivityIndicator, Modal, Switch, Alert, Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState, useMemo, useCallback } from "react";
 import { FlashList } from "@shopify/flash-list";
 import { Ionicons } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,11 +17,17 @@ import { DataQualityCard } from "@/components/data-quality";
 import { ReadinessChecklist } from "@/components/readiness-checklist";
 import { ScreenHeader } from "@/components/screen-header";
 import { BottomTabs } from "@/components/bottom-tabs";
-import { useCampaign, useInfiniteLeads, useDataQuality } from "@/lib/queries";
+import {
+  useCampaign, useInfiniteLeads, useDataQuality,
+  useShares, useCreateShare, useDeleteShare, LeadShare,
+} from "@/lib/queries";
 import { useRealtimeLeads } from "@/hooks/use-realtime-leads";
 import { useDebounce } from "@/hooks/use-debounce";
 import { truncate } from "@/lib/utils";
 import type { Lead } from "@/lib/types";
+
+// Vercel domain for share links (set in .env as EXPO_PUBLIC_WEB_URL)
+const WEB_URL = process.env.EXPO_PUBLIC_WEB_URL || "https://cold-email-ninja.vercel.app";
 
 export default function CampaignDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -48,6 +55,52 @@ export default function CampaignDetailScreen() {
 
   // Realtime lead updates
   useRealtimeLeads(id);
+
+  // ── Share modal state ─────────────────────────────────────────────
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [shareName, setShareName] = useState("");
+  const [shareIsPublic, setShareIsPublic] = useState(true);
+  const { data: shares } = useShares(id);
+  const createShare = useCreateShare();
+  const deleteShare = useDeleteShare();
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleCreateShare = async () => {
+    try {
+      await createShare.mutateAsync({
+        campaign_id: id,
+        name: shareName || undefined,
+        is_public: shareIsPublic,
+      });
+      setShareName("");
+    } catch (err) {
+      Alert.alert("Error", String(err));
+    }
+  };
+
+  const handleCopyShareLink = async (share: LeadShare) => {
+    const url = `${WEB_URL}/share/${share.token}`;
+    await Clipboard.setStringAsync(url);
+    setCopiedId(share.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleDeleteShare = (share: LeadShare) => {
+    if (Platform.OS === "web") {
+      if (confirm("Delete this share link?")) {
+        deleteShare.mutate({ share_id: share.id, campaign_id: id });
+      }
+    } else {
+      Alert.alert("Delete Share", "Delete this share link?", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => deleteShare.mutate({ share_id: share.id, campaign_id: id }),
+        },
+      ]);
+    }
+  };
 
   // Flatten pages into a single array
   const leads = useMemo(
@@ -158,6 +211,12 @@ export default function CampaignDetailScreen() {
           >
             Enrichment Pipeline
           </Button>
+          <Pressable
+            onPress={() => setShareModalVisible(true)}
+            className="bg-card border border-border rounded-lg px-3 justify-center"
+          >
+            <Ionicons name="share-outline" size={20} color="#94a3b8" />
+          </Pressable>
         </View>
 
         {/* Data quality */}
@@ -229,6 +288,108 @@ export default function CampaignDetailScreen() {
         />
       </View>
       <BottomTabs />
+
+      {/* ── Share Modal ──────────────────────────────────────────── */}
+      <Modal
+        visible={shareModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShareModalVisible(false)}
+      >
+        <View className="flex-1 bg-background p-4">
+          {/* Modal header */}
+          <View className="flex-row items-center justify-between mb-6">
+            <Text className="text-lg font-bold text-foreground">
+              Share Leads
+            </Text>
+            <Pressable onPress={() => setShareModalVisible(false)}>
+              <Ionicons name="close" size={24} color="#94a3b8" />
+            </Pressable>
+          </View>
+
+          {/* Create new share */}
+          <View className="bg-card rounded-xl p-4 mb-4 border border-border">
+            <Text className="text-sm font-semibold text-foreground mb-3">
+              Create New Share Link
+            </Text>
+            <Input
+              value={shareName}
+              onChangeText={setShareName}
+              placeholder="Link name (optional)"
+              className="mb-3"
+            />
+            <View className="flex-row items-center justify-between mb-3">
+              <View>
+                <Text className="text-sm text-foreground">Public access</Text>
+                <Text className="text-xs text-muted-foreground">
+                  {shareIsPublic
+                    ? "Anyone with the link can view"
+                    : "Only you can view (requires sign-in)"}
+                </Text>
+              </View>
+              <Switch
+                value={shareIsPublic}
+                onValueChange={setShareIsPublic}
+                trackColor={{ false: "#334155", true: "#3b82f6" }}
+                thumbColor="#f8fafc"
+              />
+            </View>
+            <Button
+              onPress={handleCreateShare}
+              disabled={createShare.isPending}
+            >
+              {createShare.isPending ? "Creating..." : "Create Link"}
+            </Button>
+          </View>
+
+          {/* Existing shares */}
+          <Text className="text-sm font-semibold text-foreground mb-2">
+            Existing Share Links
+          </Text>
+          {!shares?.length ? (
+            <Text className="text-sm text-muted-foreground text-center py-4">
+              No share links yet.
+            </Text>
+          ) : (
+            shares.map((share) => (
+              <View
+                key={share.id}
+                className="bg-card rounded-xl p-3 mb-2 border border-border"
+              >
+                <View className="flex-row items-center justify-between">
+                  <View className="flex-1 mr-2">
+                    <Text className="text-sm font-medium text-foreground" numberOfLines={1}>
+                      {share.name || "Untitled"}
+                    </Text>
+                    <Text className="text-xs text-muted-foreground mt-0.5">
+                      {share.is_public ? "Public" : "Private"} ·{" "}
+                      {new Date(share.created_at).toLocaleDateString()}
+                    </Text>
+                  </View>
+                  <View className="flex-row gap-2">
+                    <Pressable
+                      onPress={() => handleCopyShareLink(share)}
+                      className="bg-primary/10 rounded-lg px-3 py-1.5"
+                    >
+                      <Text className="text-xs text-primary font-medium">
+                        {copiedId === share.id ? "Copied!" : "Copy Link"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleDeleteShare(share)}
+                      className="bg-red-500/10 rounded-lg px-3 py-1.5"
+                    >
+                      <Text className="text-xs text-red-400 font-medium">
+                        Delete
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
