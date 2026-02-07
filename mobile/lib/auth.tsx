@@ -70,13 +70,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // On native: use expo-web-browser for in-app browser OAuth
-    const redirectTo = Linking.createURL("auth/callback");
+    // On native: use expo-web-browser for in-app browser OAuth.
+    // GoTrue v2.2.12 only accepts redirect URLs whose hostname matches
+    // the SiteURL (zenmanager.eu) or exact strings in the allowlist.
+    // Custom schemes (exp://, cold-email-ninja://) are rejected entirely.
+    //
+    // Solution: use an auth-relay page served at zenmanager.eu/auth-relay
+    // (same hostname as SiteURL, so GoTrue accepts it). Traefik proxies
+    // this path to the Supabase Edge Function which serves HTML that reads
+    // the tokens from the URL fragment and redirects to the app's deep link.
+    const appDeepLink = Linking.createURL("auth/callback");
+    const relayUrl = `https://zenmanager.eu/auth-relay?redirect=${encodeURIComponent(appDeepLink)}`;
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo,
+        redirectTo: relayUrl,
         skipBrowserRedirect: true,
       },
     });
@@ -84,7 +93,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
     if (!data.url) return;
 
-    const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    // Listen for the app deep link (exp:// or cold-email-ninja://)
+    // The relay page will redirect the browser to this deep link after loading
+    const result = await WebBrowser.openAuthSessionAsync(data.url, appDeepLink);
 
     if (result.type === "success") {
       /* Extract tokens from the redirect URL fragment */
