@@ -28,23 +28,29 @@ class CleanLeadsWorker(SupabaseWorkerBase):
         max_leads = self.config.get("max_leads", 1000)
         workers = self.config.get("workers", 10)
 
-        # Fetch leads with websites
-        leads = self.get_leads(self.campaign_id, limit=max_leads)
-        leads = [l for l in leads if l.get("company_website") or l.get("domain")]
+        # Build category OR filter for SQL-level filtering (much faster than in-memory)
+        or_filter = None
+        if categories:
+            conditions = [f"category.ilike.*{cat}*" for cat in categories]
+            or_filter = ",".join(conditions)
+
+        # Fetch leads with websites, filtered by category at SQL level
+        # - not_null ensures only leads with company_website are fetched
+        # - or_filter handles category matching in the DB query
+        # - Pagination in get_leads handles large result sets (>5000 rows)
+        leads = self.get_leads(
+            self.campaign_id,
+            limit=max_leads,
+            not_null=["company_website"],
+            or_filter=or_filter,
+        )
 
         if not leads:
             self.complete({"processed": 0, "message": "No leads with websites found"})
             return
 
-        # Filter by category if specified
         if categories:
-            filtered = []
-            for lead in leads:
-                lead_category = (lead.get("category") or "").lower()
-                if any(cat.lower() in lead_category for cat in categories):
-                    filtered.append(lead)
-            leads = filtered
-            logger.info(f"Category filter: {len(leads)} leads match {categories}")
+            logger.info(f"Category filter (SQL): {len(leads)} leads match {categories}")
 
         logger.info(f"Validating {len(leads)} lead websites with {workers} workers")
         self.update_progress(0, len(leads))

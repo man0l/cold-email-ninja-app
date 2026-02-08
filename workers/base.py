@@ -55,24 +55,70 @@ class SupabaseWorkerBase:
         self.db.from_("leads").update(updates).eq("id", lead_id).execute()
 
     def get_leads(self, campaign_id: str, filters: Optional[Dict] = None,
-                  limit: int = 1000) -> List[Dict]:
-        """Fetch leads for processing (scoped to customer_id from the job)."""
-        query = self.db.from_("leads").select("*").eq(
-            "campaign_id", campaign_id
-        )
-        if self.customer_id:
-            query = query.eq("customer_id", self.customer_id)
-        query = query.limit(limit)
+                  limit: int = 1000, not_null: Optional[List[str]] = None,
+                  or_filter: Optional[str] = None,
+                  order_by: str = "created_at") -> List[Dict]:
+        """Fetch leads for processing (scoped to customer_id from the job).
 
-        if filters:
-            for key, value in filters.items():
-                if value is None:
-                    query = query.is_(key, "null")
-                else:
-                    query = query.eq(key, value)
+        Args:
+            campaign_id: Campaign to fetch leads for.
+            filters: Equality filters {column: value}. None values become IS NULL.
+            limit: Maximum total leads to return.
+            not_null: List of columns that must not be NULL (pushed to SQL).
+            or_filter: PostgREST OR filter string, e.g.
+                       "category.ilike.*cat1*,category.ilike.*cat2*"
+            order_by: Column to ORDER BY for deterministic results.
 
-        result = query.execute()
-        return result.data or []
+        Returns:
+            List of lead dicts, fetched in paginated batches.
+        """
+        PAGE_SIZE = 5000
+        all_leads: List[Dict] = []
+        offset = 0
+
+        while len(all_leads) < limit:
+            batch_size = min(PAGE_SIZE, limit - len(all_leads))
+
+            query = self.db.from_("leads").select("*").eq(
+                "campaign_id", campaign_id
+            )
+            if self.customer_id:
+                query = query.eq("customer_id", self.customer_id)
+
+            # NOT NULL filters (pushed to SQL instead of in-memory)
+            if not_null:
+                for col in not_null:
+                    query = query.not_.is_(col, "null")
+
+            # Standard equality / IS NULL filters
+            if filters:
+                for key, value in filters.items():
+                    if value is None:
+                        query = query.is_(key, "null")
+                    else:
+                        query = query.eq(key, value)
+
+            # OR filter (PostgREST syntax for complex conditions)
+            if or_filter:
+                query = query.or_(or_filter)
+
+            # Deterministic ordering so pagination doesn't skip/duplicate rows.
+            # Secondary sort on 'id' breaks ties when order_by is not unique.
+            query = query.order(order_by).order("id")
+
+            # Paginated fetch
+            query = query.range(offset, offset + batch_size - 1)
+
+            result = query.execute()
+            batch = result.data or []
+            all_leads.extend(batch)
+
+            if len(batch) < batch_size:
+                break  # No more rows available
+
+            offset += batch_size
+
+        return all_leads[:limit]
 
     def get_api_key(self, service: str) -> Optional[str]:
         """Get API key from ninja.api_keys table (scoped to customer), fallback to env var."""
