@@ -1,17 +1,28 @@
 /**
  * Realtime subscription for bulk job progress.
- * Listens to ninja.bulk_jobs table changes via Supabase Realtime,
- * with polling fallback every 3s for running/pending jobs.
+ *
+ * Primary: Supabase Realtime postgres_changes on ninja.bulk_jobs.
+ * Fallback: REST polling every 15s as a safety net (stops when Realtime
+ *           proves active or the job reaches a terminal state).
  */
 import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import type { BulkJob, JobProgress } from "@/lib/types";
 
-const POLL_INTERVAL_MS = 3000;
+/** Polling is a safety net — 15s is enough since Realtime delivers in <1s */
+const POLL_INTERVAL_MS = 15_000;
 
 export function useRealtimeJob(jobId: string | null) {
   const [job, setJob] = useState<BulkJob | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const realtimeActiveRef = useRef(false);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   const fetchJob = useCallback(async () => {
     if (!jobId) return;
@@ -26,10 +37,12 @@ export function useRealtimeJob(jobId: string | null) {
   useEffect(() => {
     if (!jobId) return;
 
+    realtimeActiveRef.current = false;
+
     // Fetch initial state
     fetchJob();
 
-    // Subscribe to changes via Realtime
+    // Primary: subscribe to changes via Realtime
     const channel = supabase
       .channel(`job:${jobId}`)
       .on(
@@ -41,22 +54,23 @@ export function useRealtimeJob(jobId: string | null) {
           filter: `id=eq.${jobId}`,
         },
         (payload) => {
+          realtimeActiveRef.current = true;
+          stopPolling(); // Realtime is working — no need to poll
           setJob(payload.new as BulkJob);
         }
       )
       .subscribe();
 
-    // Polling fallback: fetch every 3s while the job is active.
-    // Stops automatically once the job reaches a terminal state.
+    // Fallback: poll at a relaxed interval as safety net
     pollRef.current = setInterval(() => {
-      fetchJob();
+      if (!realtimeActiveRef.current) fetchJob();
     }, POLL_INTERVAL_MS);
 
     return () => {
       supabase.removeChannel(channel);
-      if (pollRef.current) clearInterval(pollRef.current);
+      stopPolling();
     };
-  }, [jobId, fetchJob]);
+  }, [jobId, fetchJob, stopPolling]);
 
   // Stop polling once the job reaches a terminal state
   useEffect(() => {
@@ -66,23 +80,31 @@ export function useRealtimeJob(jobId: string | null) {
         job.status === "failed" ||
         job.status === "cancelled")
     ) {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      stopPolling();
     }
-  }, [job?.status]);
+  }, [job?.status, stopPolling]);
 
   return job;
 }
 
 /**
  * Subscribe to all active jobs for a campaign.
- * Realtime + polling fallback every 3s while there are active jobs.
+ *
+ * Primary: Supabase Realtime postgres_changes on ninja.bulk_jobs.
+ * Fallback: REST polling every 15s as a safety net (stops when Realtime
+ *           proves active or no active jobs remain).
  */
 export function useRealtimeCampaignJobs(campaignId: string | null) {
   const [jobs, setJobs] = useState<BulkJob[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const realtimeActiveRef = useRef(false);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   const fetchJobs = useCallback(async () => {
     if (!campaignId) return;
@@ -98,10 +120,12 @@ export function useRealtimeCampaignJobs(campaignId: string | null) {
   useEffect(() => {
     if (!campaignId) return;
 
+    realtimeActiveRef.current = false;
+
     // Fetch initial state
     fetchJobs();
 
-    // Subscribe to changes via Realtime
+    // Primary: subscribe to changes via Realtime
     const channel = supabase
       .channel(`campaign_jobs:${campaignId}`)
       .on(
@@ -113,6 +137,8 @@ export function useRealtimeCampaignJobs(campaignId: string | null) {
           filter: `campaign_id=eq.${campaignId}`,
         },
         (payload) => {
+          realtimeActiveRef.current = true;
+          stopPolling(); // Realtime is working — no need to poll
           if (payload.eventType === "INSERT") {
             setJobs((prev) => [payload.new as BulkJob, ...prev]);
           } else if (payload.eventType === "UPDATE") {
@@ -127,24 +153,21 @@ export function useRealtimeCampaignJobs(campaignId: string | null) {
       )
       .subscribe();
 
-    // Polling fallback every 3s
+    // Fallback: poll at a relaxed interval as safety net
     pollRef.current = setInterval(() => {
-      fetchJobs();
+      if (!realtimeActiveRef.current) fetchJobs();
     }, POLL_INTERVAL_MS);
 
     return () => {
       supabase.removeChannel(channel);
-      if (pollRef.current) clearInterval(pollRef.current);
+      stopPolling();
     };
-  }, [campaignId, fetchJobs]);
+  }, [campaignId, fetchJobs, stopPolling]);
 
   // Stop polling when there are no active jobs
   useEffect(() => {
-    if (jobs.length === 0 && pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, [jobs.length]);
+    if (jobs.length === 0) stopPolling();
+  }, [jobs.length, stopPolling]);
 
   return jobs;
 }
