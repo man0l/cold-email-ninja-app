@@ -75,34 +75,17 @@ jobs:
   # ──────────────────────────────────────────────
   # 3. Apply new SQL migrations via Supabase CLI
   #    Connects directly to the database over the network.
+  #    supabase db push is idempotent — only applies
+  #    migrations not yet in schema_migrations.
   # ──────────────────────────────────────────────
   migrations:
     runs-on: ubuntu-latest
-    environment: production          # requires manual approval in GitHub
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2          # need HEAD~1 for migration diff
 
-      - name: Detect new migrations
-        id: detect
-        run: |
-          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'supabase/migrations/*.sql' 2>/dev/null || true)
-          if [ -z "$CHANGED" ]; then
-            echo "No migration changes detected."
-            echo "has_migrations=false" >> $GITHUB_OUTPUT
-          else
-            echo "Migrations to apply:"
-            echo "$CHANGED"
-            echo "has_migrations=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Install Supabase CLI
-        if: steps.detect.outputs.has_migrations == 'true'
-        uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@v1
 
       - name: Apply migrations
-        if: steps.detect.outputs.has_migrations == 'true'
         env:
           PGSSLMODE: disable
         run: supabase db push --db-url "${{ secrets.SUPABASE_DB_URL }}"
