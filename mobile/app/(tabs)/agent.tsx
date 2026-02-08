@@ -29,9 +29,9 @@ import {
   useAgentConversations,
   useSaveConversation,
   useDeleteConversation,
-  useJobProgress,
   useActiveJobsSince,
 } from "@/lib/queries";
+import { useRealtimeJob } from "@/hooks/use-realtime-job";
 import { JOB_TYPE_LABELS } from "@/lib/utils";
 import type { AgentMessage, AgentToolLogEntry } from "@/lib/types";
 
@@ -77,7 +77,7 @@ function timeAgo(dateStr: string): string {
 // ─── Job Progress Bar ─────────────────────────────────────────────
 
 function JobProgressBar({ jobId }: { jobId: string }) {
-  const { data: job } = useJobProgress(jobId);
+  const job = useRealtimeJob(jobId);
 
   if (!job) return null;
 
@@ -487,7 +487,7 @@ export default function AgentScreen() {
 
   // ─── Auto-suggest: track the last async job for completion ─────
   const [trackedJobId, setTrackedJobId] = useState<string | null>(null);
-  const { data: trackedJobData } = useJobProgress(trackedJobId);
+  const trackedJobData = useRealtimeJob(trackedJobId);
   const prevTrackedStatusRef = useRef<string | null>(null);
 
   const sendMutation = useSendAgentMessage();
