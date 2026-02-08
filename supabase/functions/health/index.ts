@@ -12,13 +12,16 @@ Deno.serve(async (req: Request) => {
   const supabase = getSupabaseClient(req);
 
   try {
-    // Check DB connectivity and get counts
-    const [campaigns, leads, bulkJobs, enrichmentJobs] = await Promise.all([
+    // Check DB connectivity, get counts, and read app version in parallel
+    const [campaigns, leads, bulkJobs, enrichmentJobs, settingsRes] = await Promise.all([
       supabase.from("campaigns").select("id", { count: "exact", head: true }),
       supabase.from("leads").select("id", { count: "exact", head: true }),
       supabase.from("bulk_jobs").select("id", { count: "exact", head: true }),
       supabase.from("enrichment_jobs").select("id", { count: "exact", head: true }),
+      supabase.from("app_settings").select("app_version").eq("id", 1).single(),
     ]);
+
+    const appVersion = settingsRes.data?.app_version ?? "0.0.0";
 
     // Check for running/pending jobs
     const { data: activeJobs } = await supabase
@@ -39,7 +42,7 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse({
       status: "ok",
-      app_version: "1.2.0",
+      app_version: appVersion,
       schema: "ninja",
       timestamp: new Date().toISOString(),
       counts: {
