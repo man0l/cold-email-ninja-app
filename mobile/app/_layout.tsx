@@ -2,9 +2,12 @@ import "../global.css";
 import { Stack, useSegments } from "expo-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaProvider } from "react-native-safe-area-context";
-import { View, ActivityIndicator } from "react-native";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import { View, Text, Pressable, ActivityIndicator, Platform } from "react-native";
+import Constants from "expo-constants";
+import { useState } from "react";
 import { AuthProvider, useAuth } from "@/lib/auth";
+import { useVersionCheck } from "@/lib/queries";
 import LoginScreen from "./login";
 
 const queryClient = new QueryClient({
@@ -15,6 +18,54 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// ─── Update Banner ───────────────────────────────────────────────────
+
+function UpdateBanner() {
+  const { data: latestVersion } = useVersionCheck();
+  const [dismissed, setDismissed] = useState(false);
+  const insets = useSafeAreaInsets();
+
+  const currentVersion = Constants.expoConfig?.version ?? "0.0.0";
+  const updateAvailable = latestVersion && latestVersion !== currentVersion;
+
+  if (!updateAvailable || dismissed) return null;
+
+  const handleUpdate = () => {
+    if (Platform.OS === "web") {
+      window.location.reload();
+    }
+  };
+
+  return (
+    <View
+      style={{ paddingTop: insets.top, backgroundColor: "#3b82f6" }}
+    >
+      <Pressable
+        onPress={handleUpdate}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          paddingVertical: 8,
+          paddingHorizontal: 16,
+        }}
+      >
+        <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600", flex: 1, textAlign: "center" }}>
+          New version available — tap to update
+        </Text>
+        <Pressable
+          onPress={(e) => { e.stopPropagation(); setDismissed(true); }}
+          hitSlop={8}
+        >
+          <Text style={{ color: "#ffffffcc", fontSize: 16, fontWeight: "700", paddingLeft: 12 }}>✕</Text>
+        </Pressable>
+      </Pressable>
+    </View>
+  );
+}
+
+// ─── Root Navigator ──────────────────────────────────────────────────
 
 function RootNavigator() {
   const { session, loading } = useAuth();
@@ -37,6 +88,8 @@ function RootNavigator() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
+    <UpdateBanner />
     <Stack
       screenOptions={{
         headerStyle: { backgroundColor: "#0f172a" },
@@ -67,6 +120,7 @@ function RootNavigator() {
         options={{ title: "Shared Leads", headerShown: false }}
       />
     </Stack>
+    </View>
   );
 }
 

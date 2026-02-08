@@ -16,6 +16,25 @@ const LEAD_LIST_FIELDS =
 
 const PAGE_SIZE = 50;
 
+// ==================== VERSION CHECK ====================
+
+/**
+ * Polls the health endpoint every 5 minutes to detect new app versions.
+ * Returns the latest app_version string from the server.
+ */
+export function useVersionCheck() {
+  return useQuery({
+    queryKey: ["version_check"],
+    queryFn: async () => {
+      const data = await invokeFunction<{ app_version?: string }>("health", {});
+      return data.app_version ?? null;
+    },
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+    retry: false,
+  });
+}
+
 // ==================== CAMPAIGNS ====================
 
 export function useCampaigns() {
