@@ -37,8 +37,8 @@ function UpdateBanner() {
       window.location.reload();
       return;
     }
-    // Android / iOS — open download page in browser
-    const url = "https://mobile-delta-nine.vercel.app";
+    // Android / iOS — open APK download page
+    const url = "http://192.168.1.18:8888/app-release.apk";
     try {
       const supported = await Linking.canOpenURL(url);
       if (supported) {
