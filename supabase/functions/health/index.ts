@@ -39,7 +39,7 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse({
       status: "ok",
-      app_version: "1.0.0",
+      app_version: "1.1.0",
       schema: "ninja",
       timestamp: new Date().toISOString(),
       counts: {
