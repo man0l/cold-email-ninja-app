@@ -1,69 +1,108 @@
-# Cold Email Ninja - Mobile App
+# OpenSDR: The Local-First, Agentic GTM Engine
 
-React Native mobile app for managing cold email campaigns, backed by a self-hosted Supabase instance with Python workers for heavy processing.
+> Stop paying the "SaaS Tax." Build your proprietary revenue moat with an Open-Source AI SDR Agent.
 
-## Architecture
+Traditional B2B outreach is dying under the weight of "spray and pray" volume. **OpenSDR** is a precision-engineered, signal-driven engine that transitions your GTM motion from manual labor to **Agentic AI Orchestration**.
 
-```
-mobile/         React Native (Expo) + NativeWind + shadcn-style components
-supabase/       Migrations (ninja schema) + Edge Functions
-workers/        Contabo Python workers for long-running jobs
-```
+Designed for the modern GTM Engineer, OpenSDR turns Google Maps into a high-intent lead goldmine, enriched with deep research, and managed entirely from a mobile-first interface.
 
-**Database:** All data lives in the `ninja` PostgreSQL schema on the self-hosted Supabase at `api.zenmanager.eu`, fully isolated from the existing `public` schema.
+---
 
-**Backend:** 13 Supabase Edge Functions handle API requests. Long-running tasks (scraping, enrichment) are dispatched as `bulk_jobs` and processed by Contabo Python workers.
+## The Problem: The "Pipeline Crisis" & SaaS Bloat
 
-**Frontend:** Expo Router with tab navigation, NativeWind (Tailwind CSS), and shadcn-style components. TanStack React Query for data fetching, Supabase Realtime for live job progress.
+The 12-tool sales stack has become an operational liability. Between $100k/year human SDRs and "black-box" AI platforms charging $2k/month, the unit economics of scale are broken.
 
-## Setup
+- **Saturation:** Cold email is flooded; only hyper-personalized, signal-led outreach wins.
+- **Privacy:** Sending your lead data to 3rd party clouds introduces "sync states" and security risks.
+- **Cost:** Task-based automation (Zapier) becomes cost-prohibitive at scale.
 
-### 1. Apply Database Migrations
+---
+
+## The Solution: GTM Engineering as Code
+
+OpenSDR is a **local-first, self-hosted** alternative to legacy outreach platforms. It treats Infrastructure as Code, utilizing n8n for execution-based orchestration to give you 100% control over your data and deliverability.
+
+### The Enrichment Pipeline (The "OpenWeb" Flow)
+
+1. **Map Scrape** - Hyper-local lead extraction via RapidAPI (Google Maps).
+2. **Contact Mining** - Deep-crawl socials, phones, and emails via OpenWeb Ninja.
+3. **DM Identification** - Agentic scraping of "About" pages to find true Decision Makers.
+4. **Identity Verification** - Precision email discovery via Anymail Finder.
+5. **Data Sanitization** - Automated HTTP 200 validation & casualization (removing "Inc/LLC").
+
+---
+
+## AI SDR Unit Economics: The 71% Savings
+
+| Cost Category   | Human SDR (Annual) | OpenSDR (Annual)        | Variance |
+| --------------- | ------------------ | ----------------------- | -------- |
+| Compensation    | $60,000            | **$0**                  | -100%    |
+| Tech Stack      | $3,000             | $6,000 (APIs/Compute)   | +100%    |
+| Management      | $12,000            | $2,000 (Ops/Eng)        | -83%     |
+| **Total Cost**  | **$98,000**        | **$28,000**             | **71% Savings** |
+
+---
+
+## Mobile-First Sales Engagement
+
+In 2026, "Speed to Lead" happens on a smartphone. OpenSDR is designed with a Workflow-Simplification UX:
+
+- **Thumb-Friendly UI:** Swipe to approve leads or trigger AI sequences.
+- **Offline-First:** View your pipeline and research leads without an active connection.
+- **Push-to-Action:** Get real-time intent signals (e.g., "Lead mentioned competitor on Reddit") delivered via mobile alerts.
+
+---
+
+## Technical Architecture
+
+- **Orchestration:** n8n (Execution-based for unlimited scale).
+- **Logic:** Python/JavaScript custom nodes for proprietary data manipulation.
+- **Database:** PostgreSQL (Self-hosted) for full data provenance.
+- **AI:** LangChain + Local LLM support (Ollama) for hyper-personalized opening lines.
+
+---
+
+## Getting Started
+
+### 1. Clone the Infrastructure
 
 ```bash
-# Via psql (recommended)
-cd supabase
-./apply_migrations.sh "postgresql://postgres:YOUR_PASSWORD@YOUR_HOST:5432/postgres"
+git clone https://github.com/man0l/cold-email-ninja-app.git
+cd cold-email-ninja-app
+docker-compose up -d
 ```
 
-### 2. Configure PostgREST
+### 2. Configure n8n Workflow
 
-Add `ninja` to the exposed schemas in your Supabase Docker config:
+Import the `gtm_engine_v1.json` into your n8n instance. This contains the pre-built Enrichment Pipeline and SISR (Scalable Inbox and Sender Reputation) rotation logic.
 
-```
-PGRST_DB_SCHEMAS=public,ninja
-```
+### 3. Connect APIs
 
-Restart PostgREST: `docker compose restart rest`
+Add your credentials for:
 
-### 3. Deploy Edge Functions
+- RapidAPI (Google Maps)
+- OpenWeb Ninja
+- Anymail Finder
+- OpenAI / Anthropic (for Agentic Research)
 
-```bash
-supabase functions deploy --project-ref YOUR_REF
-```
+---
 
-### 4. Start Contabo Worker
+## Strategic Seasonality & Trends
 
-```bash
-cd workers
-pip install -r requirements.txt
-cp .env.example .env  # Fill in credentials
-python worker.py
-```
+Hiring for GTM Engineers peaks in January and July. OpenSDR is built to align with these Q1/Q3 budget resets, providing a plug-and-play system for organizations moving away from volume-based motions toward signal-driven precision.
 
-### 5. Run Mobile App
+---
 
-```bash
-cd mobile
-npm install
-npx expo start
-```
+## Contributing
 
-## Enrichment Pipeline
+We are looking for GTM Engineers to help build:
 
-1. **Find Emails** - OpenWeb Ninja API (emails, phones, socials)
-2. **Find Decision Makers** - Waterfall: About pages -> LinkedIn
-3. **Find DM Emails** - Anymail Finder API
-4. **Clean & Validate** - HTTP 200 website validation
-5. **Casualise Names** - Remove Inc/LLC/Agency suffixes
-6. **Clean Spam** - Remove 400+ spam trigger keywords
+- **Reddit "Goldmine" Listeners:** Automated intent scraping from niche subreddits.
+- **Local-First Sync:** Enhanced offline capabilities for field sales.
+- **International Parity:** Better localized AI summaries for non-US markets.
+
+---
+
+## License
+
+Distributed under the MIT License. See `LICENSE` for more information.

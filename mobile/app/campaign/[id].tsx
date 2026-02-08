@@ -28,7 +28,7 @@ import { truncate } from "@/lib/utils";
 import type { Lead } from "@/lib/types";
 
 // Vercel domain for share links (set in .env as EXPO_PUBLIC_WEB_URL)
-const WEB_URL = process.env.EXPO_PUBLIC_WEB_URL || "https://cold-email-ninja.vercel.app";
+const WEB_URL = process.env.EXPO_PUBLIC_WEB_URL || "https://mobile-delta-nine.vercel.app";
 
 export default function CampaignDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

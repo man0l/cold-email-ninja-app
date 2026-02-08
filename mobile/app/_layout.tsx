@@ -3,7 +3,7 @@ import { Stack, useSegments } from "expo-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
-import { View, Text, Pressable, ActivityIndicator, Platform } from "react-native";
+import { View, Text, Pressable, TouchableOpacity, Alert, ActivityIndicator, Platform } from "react-native";
 import Constants from "expo-constants";
 import * as Linking from "expo-linking";
 import { useState } from "react";
@@ -32,38 +32,46 @@ function UpdateBanner() {
 
   if (!updateAvailable || dismissed) return null;
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (Platform.OS === "web") {
       window.location.reload();
-    } else {
-      // On mobile, open the web app which always has the latest version
-      const url = Constants.expoConfig?.extra?.updateUrl
-        ?? `${process.env.EXPO_PUBLIC_SUPABASE_URL ?? ""}/functions/v1/health`;
-      Linking.openURL("https://mobile-delta-nine.vercel.app");
+      return;
+    }
+    // Android / iOS — open download page in browser
+    const url = "https://mobile-delta-nine.vercel.app";
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert("Update", "Please visit mobile-delta-nine.vercel.app to get the latest version.");
+      }
+    } catch {
+      Alert.alert("Update", "Please visit mobile-delta-nine.vercel.app to get the latest version.");
     }
   };
 
   return (
-    <View style={{ paddingTop: insets.top, backgroundColor: "#3b82f6" }}>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          paddingVertical: 8,
-          paddingHorizontal: 16,
-        }}
-      >
-        {/* Tap area — separate from close button to avoid nested Pressable */}
-        <Pressable onPress={handleUpdate} style={{ flex: 1 }}>
+    <View style={{ paddingTop: insets.top, backgroundColor: "#3b82f6", zIndex: 999 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 16 }}>
+        <TouchableOpacity
+          onPress={handleUpdate}
+          activeOpacity={0.6}
+          style={{ flex: 1, paddingVertical: 10 }}
+        >
           <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600", textAlign: "center" }}>
             New version available — tap to update
           </Text>
-        </Pressable>
+        </TouchableOpacity>
 
-        {/* Close button — sibling, not nested */}
-        <Pressable onPress={() => setDismissed(true)} hitSlop={12}>
-          <Text style={{ color: "#ffffffcc", fontSize: 16, fontWeight: "700", paddingLeft: 12 }}>✕</Text>
-        </Pressable>
+        <TouchableOpacity
+          onPress={() => setDismissed(true)}
+          activeOpacity={0.5}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          style={{ paddingLeft: 12, paddingVertical: 10 }}
+        >
+          <Text style={{ color: "#ffffffcc", fontSize: 16, fontWeight: "700" }}>✕</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
