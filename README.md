@@ -1,10 +1,10 @@
-# OpenSDR: The Local-First, Agentic GTM Engine
+# ZeroGTM: The Local-First, Agentic GTM Engine
 
 > Stop paying the "SaaS Tax." Build your proprietary revenue moat with an Open-Source AI SDR Agent.
 
-Traditional B2B outreach is dying under the weight of "spray and pray" volume. **OpenSDR** is a precision-engineered, signal-driven engine that transitions your GTM motion from manual labor to **Agentic AI Orchestration**.
+Traditional B2B outreach is dying under the weight of "spray and pray" volume. **ZeroGTM** is a precision-engineered, signal-driven engine that transitions your GTM motion from manual labor to **Agentic AI Orchestration**.
 
-Designed for the modern GTM Engineer, OpenSDR turns Google Maps into a high-intent lead goldmine, enriched with deep research, and managed entirely from a mobile-first interface.
+Designed for the modern GTM Engineer, ZeroGTM turns Google Maps into a high-intent lead goldmine, enriched with deep research, and managed entirely from a mobile-first interface.
 
 ---
 
@@ -20,7 +20,7 @@ The 12-tool sales stack has become an operational liability. Between $100k/year 
 
 ## The Solution: GTM Engineering as Code
 
-OpenSDR is a **local-first, self-hosted** alternative to legacy outreach platforms. It treats Infrastructure as Code, utilizing n8n for execution-based orchestration to give you 100% control over your data and deliverability.
+ZeroGTM is a **local-first, self-hosted** alternative to legacy outreach platforms. It treats Infrastructure as Code, utilizing n8n for execution-based orchestration to give you 100% control over your data and deliverability.
 
 ### The Enrichment Pipeline (The "OpenWeb" Flow)
 
@@ -45,7 +45,7 @@ OpenSDR is a **local-first, self-hosted** alternative to legacy outreach platfor
 
 ## Mobile-First Sales Engagement
 
-In 2026, "Speed to Lead" happens on a smartphone. OpenSDR is designed with a Workflow-Simplification UX:
+In 2026, "Speed to Lead" happens on a smartphone. ZeroGTM is designed with a Workflow-Simplification UX:
 
 - **Thumb-Friendly UI:** Swipe to approve leads or trigger AI sequences.
 - **Offline-First:** View your pipeline and research leads without an active connection.
@@ -89,7 +89,7 @@ Add your credentials for:
 
 ## Strategic Seasonality & Trends
 
-Hiring for GTM Engineers peaks in January and July. OpenSDR is built to align with these Q1/Q3 budget resets, providing a plug-and-play system for organizations moving away from volume-based motions toward signal-driven precision.
+Hiring for GTM Engineers peaks in January and July. ZeroGTM is built to align with these Q1/Q3 budget resets, providing a plug-and-play system for organizations moving away from volume-based motions toward signal-driven precision.
 
 ---
 
