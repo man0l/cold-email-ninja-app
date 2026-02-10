@@ -29,6 +29,27 @@ Deno.serve(async (req: Request) => {
     if (!campaign_id) return errorResponse("campaign_id required");
     if (!keywords?.length) return errorResponse("keywords required (array of strings)");
 
+    // CHECK BILLING LIMITS BEFORE ALLOWING SCRAPE
+    const { data: limitCheck, error: limitErr } = await supabase.rpc(
+      "can_add_leads",
+      {
+        customer_id_param: customerId,
+        leads_to_add_param: max_leads,
+      }
+    );
+
+    if (limitErr || !limitCheck?.[0]?.allowed) {
+      const reason = limitCheck?.[0]?.reason || "Unable to verify billing restrictions";
+      return jsonResponse(
+        {
+          error: "Billing limit exceeded",
+          reason,
+          upgrade_required: true,
+        },
+        403
+      );
+    }
+
     // Verify campaign exists and belongs to this customer
     const { data: campaign, error: campErr } = await supabase
       .from("campaigns")

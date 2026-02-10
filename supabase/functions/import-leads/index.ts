@@ -43,6 +43,28 @@ Deno.serve(async (req: Request) => {
 
     if (rows.length === 0) return errorResponse("CSV is empty");
 
+    // CHECK BILLING LIMITS BEFORE ALLOWING IMPORT
+    const { data: limitCheck, error: limitErr } = await supabase.rpc(
+      "can_add_leads",
+      {
+        customer_id_param: customerId,
+        leads_to_add_param: rows.length,
+      }
+    );
+
+    if (limitErr || !limitCheck?.[0]?.allowed) {
+      const reason = limitCheck?.[0]?.reason || "Unable to verify billing restrictions";
+      return jsonResponse(
+        {
+          error: "Billing limit exceeded",
+          reason,
+          leads_to_import: rows.length,
+          upgrade_required: true,
+        },
+        403
+      );
+    }
+
     // Map rows to lead schema
     const leads = rows.map((row) => {
       const mapped = mapRow(row);

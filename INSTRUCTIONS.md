@@ -241,7 +241,230 @@ Steps 1-5 run as async background jobs (via the worker). Steps 6-7 run inline in
 
 ---
 
-## Troubleshooting
+## Billing & Subscription System
+
+ZeroGTM includes a built-in freemium billing system with Stripe integration for handling paid subscriptions.
+
+### Overview
+
+- **Free Plan**: 1,000 leads/month (unlimited users)
+- **Pro Plan**: 10,000 leads/month at $29/month
+- **Enterprise**: Unlimited leads (custom pricing)
+
+All users automatically start on the Free plan. The system tracks monthly usage and enforces quotas before allowing scrapes/imports.
+
+### Setup
+
+#### 1. Database Migrations (Automatic)
+
+Run all migrations:
+
+```bash
+cd supabase
+./apply_migrations.sh
+```
+
+This creates:
+- `ninja.billing_plans` — Plan definitions
+- `ninja.user_subscriptions` — Per-user subscription + usage tracking
+- `ninja.usage_logs` — Immutable lead creation audit log
+- `ninja.invoices` — Billing history for each period
+
+All billing tables have:
+- **Row-Level Security (RLS)** — Users can only see their own data
+- **Indexes** — Optimized for queries by `customer_id` and date ranges
+
+#### 2. Stripe Configuration (Required for Paid Plans)
+
+1. Create a Stripe account at [stripe.com](https://stripe.com)
+2. Create three **Products**:
+   - `Free` — $0/month, 1,000 leads/month
+   - `Pro` — $29/month, 10,000 leads/month
+   - `Enterprise` — Custom pricing, unlimited leads
+
+3. Copy your Stripe API keys to your `.env`:
+   ```env
+   STRIPE_API_KEY_PUBLIC=pk_...
+   STRIPE_API_KEY_SECRET=sk_...
+   STRIPE_WEBHOOK_SECRET=whsec_...
+   ```
+
+4. Configure webhook endpoint in Stripe dashboard:
+   - **URL**: `https://your-api.example.com/functions/billing/webhook`
+   - **Events**: 
+     - `customer.subscription.updated`
+     - `customer.subscription.deleted`
+     - `invoice.payment_succeeded`
+     - `invoice.payment_failed`
+
+#### 3. Environment Variables
+
+Add to `.env` (Supabase backend):
+
+```env
+STRIPE_API_KEY_PUBLIC=pk_test_...
+STRIPE_API_KEY_SECRET=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_test_...
+```
+
+### How It Works
+
+#### User Signup
+
+1. User signs up via Google OAuth
+2. `ninja.user_subscriptions` row is automatically created
+3. Plan is set to "Free" (1,000 leads/month)
+4. Subscription status: `active`
+
+#### Scraping/Importing Leads
+
+Before creating a scrape or import job:
+
+1. Client calls `/functions/billing/check-limits` with `leads_to_add`
+2. Server checks if user's remaining quota >= leads_to_add
+3. If **over quota** on Free tier:
+   - Request blocked with 403 error
+   - UI shows upgrade prompt
+4. If **quota OK**:
+   - Job is created
+   - After completion, system calls `/functions/billing/log-usage`
+   - Lead count is incremented in `user_subscriptions`
+
+#### Monthly Reset
+
+Every month at UTC 00:00, a scheduled job (`ninja.reset_monthly_usage()`) runs:
+
+```sql
+UPDATE ninja.user_subscriptions
+SET leads_used_this_month = 0,
+    billing_period_start = now(),
+    billing_period_end = now() + interval '1 month'
+WHERE billing_period_end <= now();
+```
+
+#### Stripe Webhook Processing
+
+When Stripe sends an event:
+
+1. **Subscription Updated** — Update `status`, `billing_period_start/end`
+2. **Subscription Deleted** — Mark as `canceled`
+3. **Invoice Paid** — Create invoice record, mark as `paid`
+4. **Invoice Failed** — Mark subscription as `past_due`, invoice as `failed`
+
+### API Endpoints
+
+#### `GET /functions/billing/get-billing-info`
+
+Returns user's current subscription & usage:
+
+```json
+{
+  "subscription_id": "uuid",
+  "plan_name": "Free",
+  "tier": "free",
+  "is_free_tier": true,
+  "monthly_leads_limit": 1000,
+  "leads_used_this_month": 750,
+  "leads_remaining": 250,
+  "percent_used": 75,
+  "billing_period_end": "2026-03-10T00:00:00Z",
+  "status": "active",
+  "stripe_subscription_id": "sub_..."
+}
+```
+
+#### `POST /functions/billing/check-limits`
+
+Check if user can add N leads:
+
+**Request**:
+```json
+{ "leads_to_add": 500 }
+```
+
+**Response (OK)**:
+```json
+{
+  "allowed": true,
+  "reason": "OK",
+  "tier": "free",
+  "leads_remaining": 500,
+  "percent_used": 50
+}
+```
+
+**Response (Over Limit)**:
+```json
+{
+  "allowed": false,
+  "reason": "Insufficient quota. free plan allows 100 more leads.",
+  "tier": "free",
+  "leads_remaining": 100,
+  "percent_used": 90
+}
+```
+
+#### `POST /functions/billing/log-usage` (Service Role Only)
+
+Log lead usage after successful job:
+
+**Request**:
+```json
+{
+  "customer_id": "uuid",
+  "campaign_id": "uuid",
+  "leads_count": 500,
+  "action": "scrape",
+  "bulk_job_id": "uuid",
+  "note": "Google Maps scrape, NYC"
+}
+```
+
+### Mobile UI Components
+
+#### Billing Dashboard (`/app/billing.tsx`)
+
+Shows:
+- Current plan name & status
+- Monthly usage progress bar
+- Leads remaining this month
+- Plan comparison table
+- Upgrade/manage subscription buttons
+
+#### Billing Limit Warning Modal (`BillingLimitWarning`)
+
+Appears when:
+- User attempts to scrape/import and quota is exceeded
+- Usage is > 80% for Free tier
+
+Shows:
+- Current usage %
+- Leads remaining
+- Upgrade link
+
+### Database Schema
+
+```sql
+-- Check subscription info
+SELECT * FROM ninja.get_user_subscription_info('user-id-uuid');
+
+-- Check if user can add 500 leads
+SELECT * FROM ninja.can_add_leads('user-id-uuid', 500);
+
+-- View usage history (immutable audit log)
+SELECT * FROM ninja.usage_logs WHERE customer_id = 'user-id-uuid';
+
+-- View all invoices for a user
+SELECT * FROM ninja.invoices WHERE customer_id = 'user-id-uuid';
+```
+
+### Common Issues
+
+- **"Insufficient quota" on Free plan** — User has hit 1,000 leads/month limit. Upgrade to Pro or wait until next month.
+- **Stripe webhook not updating** — Verify webhook URL is accessible and `STRIPE_WEBHOOK_SECRET` is correct.
+- **Subscription showing as `past_due` but payment succeeded** — Check Stripe logs; may be webhook processing delay.
+
+
 
 - **"ninja schema not found" errors** — Make sure `ninja` is in your PostgREST exposed schemas and you've applied all migrations.
 - **Edge Functions returning 404** — The `main/index.ts` router must exist. It dispatches all function calls.

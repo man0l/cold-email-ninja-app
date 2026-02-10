@@ -789,3 +789,45 @@ export function useDeleteConversation() {
     },
   });
 }
+// ==================== BILLING ====================
+
+export interface BillingInfo {
+  subscription_id: string;
+  plan_name: string;
+  tier: string;
+  is_free_tier: boolean;
+  monthly_leads_limit: number;
+  leads_used_this_month: number;
+  leads_remaining: number;
+  percent_used: number;
+  billing_period_end: string;
+  status: string;
+  stripe_subscription_id: string | null;
+}
+
+export function useBillingInfo() {
+  return useQuery({
+    queryKey: ["billing_info"],
+    queryFn: async () => {
+      const data = await invokeFunction<BillingInfo>("billing/get-billing-info", {});
+      return data;
+    },
+    staleTime: 1000 * 60 * 5, // Cache for 5 minutes
+    refetchInterval: 1000 * 60 * 5, // Refetch every 5 minutes
+  });
+}
+
+export function useCheckLeadLimit() {
+  return useMutation({
+    mutationFn: async (leadsToAdd: number) => {
+      const response = await invokeFunction<{
+        allowed: boolean;
+        reason: string;
+        tier?: string;
+        leads_remaining?: number;
+        percent_used?: number;
+      }>("billing/check-limits", { leads_to_add: leadsToAdd });
+      return response;
+    },
+  });
+}
