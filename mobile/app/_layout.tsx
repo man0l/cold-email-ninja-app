@@ -44,10 +44,10 @@ function UpdateBanner() {
       if (supported) {
         await Linking.openURL(url);
       } else {
-        Alert.alert("Update", "Please visit mobile-delta-nine.vercel.app to get the latest version.");
+        Alert.alert("Update", "Please visit app.gtm-zero.com to get the latest version.");
       }
     } catch {
-      Alert.alert("Update", "Please visit mobile-delta-nine.vercel.app to get the latest version.");
+      Alert.alert("Update", "Please visit app.gtm-zero.com to get the latest version.");
     }
   };
 

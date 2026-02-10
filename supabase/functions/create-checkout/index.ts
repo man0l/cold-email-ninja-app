@@ -85,8 +85,8 @@ Deno.serve(async (req: Request) => {
           quantity: 1,
         },
       ],
-      success_url: `${Deno.env.get("EXPO_PUBLIC_WEB_URL") || "https://mobile-delta-nine.vercel.app"}/billing?success=true`,
-      cancel_url: `${Deno.env.get("EXPO_PUBLIC_WEB_URL") || "https://mobile-delta-nine.vercel.app"}/billing?canceled=true`,
+      success_url: `${Deno.env.get("EXPO_PUBLIC_WEB_URL") || "https://app.gtm-zero.com"}/billing?success=true`,
+      cancel_url: `${Deno.env.get("EXPO_PUBLIC_WEB_URL") || "https://app.gtm-zero.com"}/billing?canceled=true`,
       metadata: {
         supabase_customer_id: customerId,
         plan_id: plan_id,

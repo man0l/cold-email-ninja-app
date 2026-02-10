@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
     // Create Customer Portal session
     const session = await stripe.billingPortal.sessions.create({
       customer: subscription.stripe_customer_id,
-      return_url: `${Deno.env.get("EXPO_PUBLIC_WEB_URL") || "https://mobile-delta-nine.vercel.app"}/billing`,
+      return_url: `${Deno.env.get("EXPO_PUBLIC_WEB_URL") || "https://app.gtm-zero.com"}/billing`,
     });
 
     return jsonResponse({
