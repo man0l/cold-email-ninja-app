@@ -38,13 +38,13 @@ BEGIN
 
   -- Add monthly allocation and reset period counter
   UPDATE ninja.credit_balances
-  SET balance = balance + p_credits_to_add,
+  SET balance = ninja.credit_balances.balance + p_credits_to_add,
       credits_used_this_period = 0,
       period_start = p_period_start,
       period_end = p_period_end,
       updated_at = now()
   WHERE customer_id = p_customer_id
-  RETURNING balance INTO v_new_balance;
+  RETURNING ninja.credit_balances.balance INTO v_new_balance;
 
   IF NOT FOUND THEN
     RETURN QUERY SELECT false, 0, 'Customer credit balance not found';
