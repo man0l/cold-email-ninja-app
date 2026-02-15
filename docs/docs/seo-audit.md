@@ -43,7 +43,7 @@
 
 ## 4. Recommendations (Ongoing)
 
-1. **Add an OG image**: Create a 1200×630 image (logo + tagline), host under `/cold-email-ninja-app/assets/og-default.png`, and set `og_image` in `_config.yml`.
+1. **Add an OG image**: Create a 1200×630 image (logo + tagline), host under `/zero-gtm/assets/og-default.png`, and set `og_image` in `_config.yml`.
 2. **Blog**: Publish 2–3 posts targeting long-tail (e.g. “Google Maps lead generation,” “email finder for sales teams”) and link from features/docs.
 3. **Internal linking**: In new content, link to getting-started, enrichment-pipeline, and pricing with descriptive anchor text.
 4. **Monitor**: Use Google Search Console for the GitHub Pages URL to track queries, clicks, and indexation.
