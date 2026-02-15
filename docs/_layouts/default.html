@@ -84,26 +84,20 @@
     <div class="wrap nav-inner">
       <a href="{{ site.baseurl }}/" class="brand">{{ site.brand | default: site.title }}</a>
       <nav class="links">
-        <a href="{{ site.baseurl }}/">Home</a>
-        <a href="{{ site.baseurl }}/features/">Features</a>
-        <a href="{{ site.baseurl }}/use-cases/">Use Cases</a>
-        <a href="{{ site.baseurl }}/integrations/">Integrations</a>
-        <a href="{{ site.baseurl }}/changelog/">Changelog</a>
-        <a href="{{ site.baseurl }}/glossary/">Glossary</a>
-        <a href="{{ site.baseurl }}/compare/">Compare</a>
-        <a href="{{ site.baseurl }}/pricing/">Pricing</a>
-        <a href="{{ site.baseurl }}/blog/">Blog</a>
-        <span class="dropdown">
-          <a href="{{ site.baseurl }}/docs/getting-started/">Docs</a>
-          <div class="dropdown-content">
-            <a href="{{ site.baseurl }}/docs/getting-started/">Getting Started</a>
-            <a href="{{ site.baseurl }}/docs/mobile-app/">Mobile App</a>
-            <a href="{{ site.baseurl }}/docs/web-app/">Web App</a>
-            <a href="{{ site.baseurl }}/docs/enrichment-pipeline/">Enrichment Pipeline</a>
-            <a href="{{ site.baseurl }}/docs/self-hosted/">Self-Hosted</a>
-            <a href="{{ site.baseurl }}/docs/api-keys/">API Keys</a>
-          </div>
-        </span>
+        {% for item in site.nav %}
+          {% if item.children %}
+            <span class="dropdown">
+              <a href="{{ site.baseurl }}{{ item.url }}">{{ item.title }}</a>
+              <div class="dropdown-content">
+                {% for child in item.children %}
+                  <a href="{{ site.baseurl }}{{ child.url }}">{{ child.title }}</a>
+                {% endfor %}
+              </div>
+            </span>
+          {% else %}
+            <a href="{{ site.baseurl }}{{ item.url }}">{{ item.title }}</a>
+          {% endif %}
+        {% endfor %}
       </nav>
     </div>
   </header>

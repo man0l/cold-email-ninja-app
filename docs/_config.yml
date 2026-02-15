@@ -46,6 +46,19 @@ nav:
     url: /features/
   - title: Use Cases
     url: /use-cases/
+    children:
+      - title: Medical Spas
+        url: /use-cases/med-spa-lead-generation/
+      - title: Dental
+        url: /use-cases/dental-lead-generation/
+      - title: HVAC
+        url: /use-cases/hvac-lead-generation/
+      - title: Real Estate
+        url: /use-cases/real-estate-lead-generation/
+      - title: Personal Injury Attorney
+        url: /use-cases/personal-injury-attorney-lead-generation/
+      - title: Custom Home Builders
+        url: /use-cases/custom-home-builders-lead-generation/
   - title: Integrations
     url: /integrations/
   - title: Changelog
