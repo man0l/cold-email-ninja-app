@@ -6,7 +6,7 @@ Updates lead records directly in ninja.leads via Supabase.
 
 Job config:
   - categories: list of category filters (OR logic) (default: [])
-  - max_leads: max leads to process (default: 1000)
+  - max_leads: max leads to process; if 0 or missing, process all (use total_with_website or no cap)
   - workers: number of concurrent HTTP validation workers (default: 10)
 """
 
@@ -25,7 +25,12 @@ logger = logging.getLogger(__name__)
 class CleanLeadsWorker(SupabaseWorkerBase):
     def run(self):
         categories = self.config.get("categories", [])
-        max_leads = self.config.get("max_leads", 1000)
+        raw_max = self.config.get("max_leads")
+        total_with_website = self.config.get("total_with_website") or 0
+        if raw_max is None or raw_max <= 0:
+            max_leads = total_with_website if total_with_website > 0 else 10_000_000
+        else:
+            max_leads = raw_max
         workers = self.config.get("workers", 10)
 
         # Build category OR filter for SQL-level filtering (much faster than in-memory)

@@ -290,7 +290,8 @@ function buildTools(config: AgentConfig) {
             },
             max_leads: {
               type: "number",
-              description: `Max leads to process (default ${defs.clean_max_leads})`,
+              description:
+                "Optional cap. If omitted or 0, ALL leads with websites are processed. Set a number only to limit (e.g. for a small test).",
             },
             dry_run: {
               type: "boolean",
@@ -645,7 +646,7 @@ async function toolCleanAndValidate(
   const {
     campaign_id,
     categories = [],
-    max_leads = defaults.clean_max_leads,
+    max_leads: maxLeadsArg,
     dry_run = true,
   } = args;
 
@@ -678,16 +679,20 @@ async function toolCleanAndValidate(
     .eq("customer_id", customerId)
     .contains("enrichment_status", { website_validated: true });
 
+  const withWebsiteCount = withWebsite || 0;
+  const maxLeads = maxLeadsArg != null && maxLeadsArg > 0 ? maxLeadsArg : withWebsiteCount;
+  const willProcess = Math.min(withWebsiteCount, maxLeads);
+
   if (dry_run) {
     return JSON.stringify({
       mode: "PREVIEW",
       campaign_name: campaign.name,
       total_leads: totalLeads || 0,
-      leads_with_website: withWebsite || 0,
+      leads_with_website: withWebsiteCount,
       already_validated: alreadyValidated || 0,
-      will_process: Math.min(withWebsite || 0, max_leads),
+      will_process: willProcess,
       categories: categories.length > 0 ? categories : "all (no filter)",
-      message: `Preview: ${withWebsite || 0} leads have websites. ${alreadyValidated || 0} already validated. Will validate up to ${Math.min(withWebsite || 0, max_leads)} leads.`,
+      message: `Preview: ${withWebsiteCount} leads have websites. ${alreadyValidated || 0} already validated. Will validate ${willProcess} leads.`,
     });
   }
 
@@ -699,9 +704,9 @@ async function toolCleanAndValidate(
       type: "clean_leads",
       config: {
         categories,
-        max_leads,
+        max_leads: maxLeads,
         workers: defaults.clean_workers,
-        total_with_website: withWebsite || 0,
+        total_with_website: withWebsiteCount,
       },
     })
     .select()
@@ -711,8 +716,8 @@ async function toolCleanAndValidate(
   return JSON.stringify({
     job_id: job.id,
     type: "clean_leads",
-    leads_with_website: withWebsite || 0,
-    message: `Clean job created for campaign "${campaign.name}". Worker will validate ${withWebsite || 0} websites.`,
+    leads_with_website: withWebsiteCount,
+    message: `Clean job created for campaign "${campaign.name}". Worker will validate ${willProcess} websites.`,
   });
 }
 

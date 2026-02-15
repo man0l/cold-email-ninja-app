@@ -21,7 +21,7 @@ Deno.serve(async (req: Request) => {
     const {
       campaign_id,
       categories = [],
-      max_leads = 1000,
+      max_leads,
       workers = 10,
     } = await req.json();
 
@@ -36,13 +36,16 @@ Deno.serve(async (req: Request) => {
       .single();
     if (campErr || !campaign) return errorResponse("Campaign not found", 404);
 
-    // Count leads
+    // Count leads with website (used as default when max_leads not provided = process all)
     const { count } = await supabase
       .from("leads")
       .select("id", { count: "exact" })
       .eq("campaign_id", campaign_id)
       .eq("customer_id", customerId)
       .not("company_website", "is", null);
+
+    const totalWithWebsite = count ?? 0;
+    const effectiveMaxLeads = max_leads != null && max_leads > 0 ? max_leads : totalWithWebsite;
 
     // Create bulk job
     const { data: job, error } = await supabase
@@ -53,9 +56,9 @@ Deno.serve(async (req: Request) => {
         type: "clean_leads",
         config: {
           categories,
-          max_leads,
+          max_leads: effectiveMaxLeads,
           workers,
-          total_with_website: count || 0,
+          total_with_website: totalWithWebsite,
         },
       })
       .select()
@@ -65,7 +68,7 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse({
       job,
-      leads_with_website: count || 0,
+      leads_with_website: totalWithWebsite,
       message: "Clean job created. Contabo worker will validate websites.",
     }, 201);
   } catch (err) {
