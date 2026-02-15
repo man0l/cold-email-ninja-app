@@ -2,6 +2,8 @@
 
 > Stop paying the "SaaS Tax." Build your proprietary revenue moat with an Open-Source AI SDR Agent.
 
+**Docs & site:** [https://man0l.github.io/zero-gtm/](https://man0l.github.io/zero-gtm/)
+
 Traditional B2B outreach is dying under the weight of "spray and pray" volume. **ZeroGTM** is a precision-engineered, signal-driven engine that transitions your GTM motion from manual labor to **Agentic AI Orchestration**.
 
 Designed for the modern GTM Engineer, ZeroGTM turns Google Maps into a high-intent lead goldmine, enriched with deep research, and managed entirely from a mobile-first interface.
