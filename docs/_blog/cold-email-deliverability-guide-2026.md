@@ -103,4 +103,5 @@ Build a **sharded infrastructure**, automate your **warming**, and rigorously **
 [ZeroGTM enrichment pipeline (verify before you send) →]({{ site.baseurl }}/docs/enrichment-pipeline/)  
 [Self-hosted setup →]({{ site.baseurl }}/docs/self-hosted/)  
 [Open source lead enrichment tools compared →]({{ site.baseurl }}/blog/open-source-lead-enrichment-tools-compared/)  
+[BYOK lead generation — why API key ownership matters →]({{ site.baseurl }}/blog/byok-lead-generation-why-api-key-ownership-matters/)  
 [Pricing & BYOK →]({{ site.baseurl }}/pricing/)
