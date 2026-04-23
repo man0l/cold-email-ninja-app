@@ -1,0 +1,1 @@
+-- Applied directly to DB. Stub file to satisfy supabase db push.
